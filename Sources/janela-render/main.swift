@@ -13,6 +13,17 @@ if a.count > 3, a[1] == "compile" {   // the build compiles the model here, beca
   try FileManager.default.moveItem(at: try MLModel.compileModel(at: URL(fileURLWithPath: a[2])), to: dst)
   exit(0)
 }
+if a.count > 3, a[1] == "synth" {   // a drawn, reproducible stand-in for a camera, with no person's likeness
+  let frames = try await SyntheticClip.write(to: URL(fileURLWithPath: a[2]), seconds: Int(a[3])!)
+  print("wrote", frames, "frames"); exit(0)
+}
+if a.count > 3, a[1] == "decode" {   // the cost of file replay alone: the same 30 fps decode, with no matting
+  let src = FileSource(url: URL(fileURLWithPath: a[2]))
+  src.onFrame = { _, _ in }
+  try src.start()
+  try await Task.sleep(for: .seconds(Double(a[3])!))
+  src.stop(); exit(0)
+}
 if a.count > 1, a[1] == "obs-hidden" {   // the app's real launch and close, on this Mac's profile
   let app = try await OBSSetup.launchHidden()
   print("launched:", app != nil, "state:", OBSSetup.extensionState())
@@ -197,6 +208,11 @@ if a.count > 1, a[1] == "selftest" {
   broken.scenes.select(lazyKey); broken.prepare()
   check("a model that can't load reports it", failed.wait(timeout: .now() + 10) == .success)
   try? FileManager.default.removeItem(at: tmpCache)
+  // Benchmark clip
+  let clipURL = FileManager.default.temporaryDirectory.appendingPathComponent("janela-synth-\(UUID().uuidString).mov")
+  let wrote = try await SyntheticClip.write(to: clipURL, seconds: 1)
+  check("synthetic clip writes 30 frames", wrote == 30 && (try? clipURL.checkResourceIsReachable()) == true)
+  try? FileManager.default.removeItem(at: clipURL)
   // OBS setup
   let ext = "com.obsproject.obs-studio.mac-camera-extension (33.0.1/40954849292)\tOBS Virtual Camera\t"
   check("extension active", OBSSetup.parseState("*\t*\t2MMRE5MTB8\t\(ext)[activated enabled]") == .active)
