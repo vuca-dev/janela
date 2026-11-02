@@ -296,14 +296,18 @@ struct Config: Codable {
     guard let m = setupModel else { return }
     if filePath == nil, m.access != CameraSource.access { m.access = CameraSource.access }
     switch m.stage {
-    case .turningOn, .needApproval:
+    case .turningOn, .finishInOBS, .needApproval:
       switch OBSSetup.extensionState() {
       case .active:
         m.stage = .ready(outputDevice() ?? sink.preferredNames.first ?? "OBS Virtual Camera"); closeOBS(); stopWatchingSetup()
       case .waitingForUser, .disabled:
         if m.stage != .needApproval { m.stage = .needApproval; NSWorkspace.shared.open(OBSSetup.extensionSettings) }
       case .absent:
-        if m.stage == .turningOn, Date().timeIntervalSince(turnOnStarted) > 20 { closeOBS(); m.stage = .failed("OBS didn't respond. Try again.") }
+        // A first launch can sit on OBS's own permission window, so never close OBS on a timer.
+        let waited = Date().timeIntervalSince(turnOnStarted)
+        let open = !NSRunningApplication.runningApplications(withBundleIdentifier: OBSSetup.bundleID).isEmpty
+        if open, m.stage == .turningOn, waited > 8 { launchedOBS?.unhide(); m.stage = .finishInOBS }
+        else if !open, m.stage != .needApproval, waited > 20 { launchedOBS = nil; m.stage = .failed("OBS closed before it finished. Try again.") }
       }
     default: break
     }
@@ -326,7 +330,7 @@ struct Config: Codable {
     let shots = UserDefaults.standard.string(forKey: "setupShots") ?? "/tmp/janela"
     Task { @MainActor in
       if let st = UserDefaults.standard.string(forKey: "setupStages"), st == "1" {
-        let all: [(String, CameraStage, Bool?)] = [("a", .needOBS, nil), ("b", .downloading(0.42), nil), ("c", .turningOn, nil), ("d", .needApproval, nil), ("e", .failed("The download didn't match its checksum, so it wasn't installed."), false), ("f", .ready("OBS Virtual Camera"), true)]
+        let all: [(String, CameraStage, Bool?)] = [("a", .needOBS, nil), ("b", .downloading(0.42), nil), ("c", .turningOn, nil), ("c2", .finishInOBS, nil), ("d", .needApproval, nil), ("e", .failed("The download didn't match its checksum, so it wasn't installed."), false), ("f", .ready("OBS Virtual Camera"), true)]
         for (n, s, a) in all { m.stage = s; m.access = a; try? await Task.sleep(for: .milliseconds(500)); w.snapshot(to: shots + "-stage-\(n).png") }
         exit(0)
       }

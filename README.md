@@ -31,8 +31,8 @@ runs while an app reads it, so otherwise its light stays off.
 
 Needs Apple Silicon and macOS 14 or later. Tested on macOS 27 so far.
 
-1. Download `Janela.zip` from the [latest release](https://github.com/vuca-dev/janela/releases/latest),
-   unzip it, and move Janela to Applications.
+1. Download `Janela.dmg` from the [latest release](https://github.com/vuca-dev/janela/releases/latest),
+   open it, and drag Janela to Applications.
 2. Open Janela. It isn't notarized by Apple yet, so macOS will block it the first time. Open
    System Settings > Privacy & Security, scroll to Security, click **Open Anyway**, and confirm.
 3. Follow the setup window: enter your city or postal code, pick a background, and allow the

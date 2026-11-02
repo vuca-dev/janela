@@ -3,7 +3,7 @@ import JanelaCore
 import SwiftUI
 
 enum CameraStage: Equatable {
-  case needOBS, downloading(Double), installing, turningOn, needApproval, ready(String), failed(String)
+  case needOBS, downloading(Double), installing, turningOn, finishInOBS, needApproval, ready(String), failed(String)
 }
 
 @MainActor final class SetupModel: ObservableObject {
@@ -84,10 +84,12 @@ struct SetupView: View {
       SetupRow(done: false, title: "Installing OBS", detail: "Checking and installing…") { ProgressView().controlSize(.small) }
     case .turningOn:
       SetupRow(done: false, title: "Turning on the virtual camera", detail: "This takes a few seconds.") { ProgressView().controlSize(.small) }
+    case .finishInOBS:
+      SetupRow(done: false, title: "Finish in OBS", detail: "Allow anything OBS asks for. Janela will continue on its own.") { ProgressView().controlSize(.small) }
     case .needApproval:
       SetupRow(done: false, title: "Allow the virtual camera", detail: "Turn on OBS under Camera Extensions. Janela will notice.") { Button("Open Settings") { model.onCameraStep() } }
     case let .ready(name):
-      SetupRow(done: true, title: "Virtual camera ready", detail: "In your meeting app, choose \(name).") { EmptyView() }
+      SetupRow(done: true, title: "Virtual camera ready", detail: "In your meeting app, choose \(name). Restart the app if it was already open.") { EmptyView() }
     case let .failed(why):
       SetupRow(done: false, title: "Virtual camera", detail: why) { Button("Try Again") { model.onCameraStep() } }
     }
@@ -95,9 +97,9 @@ struct SetupView: View {
 
   @ViewBuilder var accessRow: some View {
     switch model.access {
-    case .some(true): SetupRow(done: true, title: "Camera access", detail: "Your video stays on this Mac.") { EmptyView() }
+    case .some(true): SetupRow(done: true, title: "Camera access", detail: "Your video never leaves this Mac.") { EmptyView() }
     case .some(false): SetupRow(done: false, title: "Camera access is off", detail: "Turn on Janela in Camera settings.") { Button("Open Settings") { model.onAccess() } }
-    case nil: SetupRow(done: false, title: "Camera access", detail: "Your video stays on this Mac.") { Button("Allow") { model.onAccess() } }
+    case nil: SetupRow(done: false, title: "Camera access", detail: "Your video never leaves this Mac.") { Button("Allow") { model.onAccess() } }
     }
   }
 
@@ -128,8 +130,7 @@ struct SetupView: View {
           }.background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
         }
-        Text(model.problem ?? "Search uses Apple Maps. Weather comes from Open-Meteo.")
-          .font(.caption).foregroundStyle(model.problem == nil ? Color.secondary : Color.orange)
+        if let problem = model.problem { Text(problem).font(.caption).foregroundStyle(.orange) }
       }
       VStack(alignment: .leading, spacing: 8) {
         Text("Background").font(.headline)
