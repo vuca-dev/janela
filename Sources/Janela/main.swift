@@ -228,7 +228,7 @@ struct Config: Codable {
     if let setup, setup.window.isVisible { setup.window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
     let k = key()
     let scenes = pipeline.scenes.availableScenes().map { (name: $0, image: pipeline.scenes.thumbnail(scene: $0, weather: k.weather, phase: k.phase)) }
-    let m = SetupModel(place: config.place, scene: k.scene, scenes: scenes, firstRun: firstRun, stage: currentStage(), access: filePath == nil ? CameraSource.access : true)
+    let m = SetupModel(place: config.place, forecast: forecast, scene: k.scene, scenes: scenes, firstRun: firstRun, stage: currentStage(), access: filePath == nil ? CameraSource.access : true)
     let w = SetupWindow(model: m); setup = w; setupModel = m
     m.onCameraStep = { [weak self] in self?.cameraStep() }
     m.onAccess = { [weak self] in self?.askForCameraAccess() }

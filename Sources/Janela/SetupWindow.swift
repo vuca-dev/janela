@@ -9,7 +9,8 @@ enum CameraStage: Equatable {
 @MainActor final class SetupModel: ObservableObject {
   @Published var query = "" { didSet { if query != oldValue { lookUp() } } }
   @Published var suggestions: [LocationSuggestion] = []
-  @Published var place: Place?
+  @Published var place: Place? { didSet { if place != oldValue { loadForecast() } } }
+  @Published var forecast: Forecast?
   @Published var scene: String
   @Published var problem: String?
   @Published var stage: CameraStage
@@ -23,11 +24,25 @@ enum CameraStage: Equatable {
   var onAccess: () -> Void = {}
   var onDone: (Place?) -> Void = { _ in }
   private var task: Task<Void, Never>?
+  private var weatherTask: Task<Void, Never>?
   private let search = LocationSearch()
 
-  init(place: Place?, scene: String, scenes: [(name: String, image: CGImage?)], firstRun: Bool, stage: CameraStage, access: Bool?) {
-    self.place = place; self.scene = scene; self.scenes = scenes; self.firstRun = firstRun; self.stage = stage; self.access = access
+  init(place: Place?, forecast: Forecast?, scene: String, scenes: [(name: String, image: CGImage?)], firstRun: Bool, stage: CameraStage, access: Bool?) {
+    self.forecast = forecast; self.place = place; self.scene = scene; self.scenes = scenes; self.firstRun = firstRun; self.stage = stage; self.access = access
     if let place { query = place.name }
+    loadForecast()
+  }
+
+  /// A forecast from an older version has no time zone, so it can't fill the preview.
+  private func loadForecast() {
+    weatherTask?.cancel()
+    guard let place else { forecast = nil; return }
+    if forecast?.place == place, forecast?.timeZone != nil, forecast?.isFresh(at: Date(), for: place) == true { return }
+    if forecast?.place != place { forecast = nil }
+    weatherTask = Task {
+      guard let f = try? await WeatherService.forecast(place), !Task.isCancelled, self.place == place else { return }
+      forecast = f
+    }
   }
 
   func choose(_ s: LocationSuggestion) async {
@@ -69,6 +84,23 @@ struct SetupRow<Trailing: View>: View {
       }
       Spacer(minLength: 8)
       trailing
+    }
+  }
+}
+
+/// The place's weather and clock, in the setup window's caption style.
+struct PlacePreview: View {
+  let forecast: Forecast
+  var body: some View {
+    TimelineView(.everyMinute) { context in
+      if let now = PlaceNow(forecast: forecast, at: context.date) {
+        HStack(spacing: 5) {
+          Image(systemName: now.symbol)
+          Text(now.conditions)
+          Spacer(minLength: 8)
+          Text(now.clock)
+        }.font(.caption).foregroundStyle(.secondary)
+      }
     }
   }
 }
@@ -139,7 +171,11 @@ struct SetupView: View {
           }.background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25)))
         }
-        if let problem = model.problem { Text(problem).font(.caption).foregroundStyle(.orange) }
+        if let problem = model.problem {
+          Text(problem).font(.caption).foregroundStyle(.orange)
+        } else if model.suggestions.isEmpty, model.place != nil, let forecast = model.forecast {
+          PlacePreview(forecast: forecast)
+        }
       }
       VStack(alignment: .leading, spacing: 8) {
         Text("Background").font(.headline)
@@ -185,5 +221,11 @@ struct SetupView: View {
     guard let r = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
     view.cacheDisplay(in: view.bounds, to: r)
     try? r.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+    #if JANELA_TEST
+    // cacheDisplay leaves out text, so also draw the SwiftUI view directly.
+    let renderer = ImageRenderer(content: host.rootView.background(Color(nsColor: .windowBackgroundColor)))
+    renderer.scale = 2
+    if let i = renderer.cgImage { try? NSBitmapImageRep(cgImage: i).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path + ".swiftui.png")) }
+    #endif
   }
 }

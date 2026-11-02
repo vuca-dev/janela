@@ -17,7 +17,7 @@ cat > $A/Contents/Info.plist <<P
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>io.github.vuca-dev.janela</string><key>CFBundleName</key><string>Janela</string><key>CFBundleIconFile</key><string>Janela</string>
 <key>CFBundleExecutable</key><string>Janela</string><key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.3</string><key>CFBundleVersion</key><string>4</string>
+<key>CFBundleShortVersionString</key><string>0.1.4</string><key>CFBundleVersion</key><string>5</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string><key>LSUIElement</key><true/>
 <key>NSCameraUsageDescription</key><string>Janela places you in your background. Your video never leaves this Mac.</string>
 </dict></plist>
