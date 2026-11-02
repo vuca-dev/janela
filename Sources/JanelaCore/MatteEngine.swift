@@ -1,5 +1,6 @@
 import CoreML
 import CoreVideo
+import CryptoKit
 import Foundation
 
 /// Robust Video Matting on Core ML. Stateful: frames must arrive in order, one at a time.
@@ -85,14 +86,35 @@ public final class MatteEngine {
     return Result(source: src, foreground: fgr, alpha: pha)
   }
 
-  /// Compiles a .mlmodel once, into a stable cache location.
+  /// Compiles a model once per distinct content, so a re-export can never reuse an old build.
   public static func compiled(_ source: URL, cacheDirectory: URL) throws -> URL {
     if source.pathExtension == "mlmodelc" { return source }
-    let dst = cacheDirectory.appendingPathComponent(source.deletingPathExtension().lastPathComponent + ".mlmodelc")
+    let name = source.deletingPathExtension().lastPathComponent
+    let dst = cacheDirectory.appendingPathComponent("\(name)-\(try contentKey(source)).mlmodelc")
     if FileManager.default.fileExists(atPath: dst.path) { return dst }
     try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     let tmp = try MLModel.compileModel(at: source)
-    try FileManager.default.moveItem(at: tmp, to: dst)
+    do { try FileManager.default.moveItem(at: tmp, to: dst) } catch {
+      // Another process can finish the same compile first.
+      guard FileManager.default.fileExists(atPath: dst.path) else { throw error }
+      try? FileManager.default.removeItem(at: tmp)
+    }
     return dst
+  }
+
+  /// A hash of a model file, or of every path and file in a package.
+  public static func contentKey(_ source: URL) throws -> String {
+    let fm = FileManager.default
+    let base = source.resolvingSymlinksInPath().path
+    var hash = SHA256()
+    var files = [base]
+    if let e = fm.enumerator(atPath: base) { files = e.compactMap { $0 as? String }.sorted().map { base + "/" + $0 } }
+    for f in files {
+      var dir: ObjCBool = false
+      guard fm.fileExists(atPath: f, isDirectory: &dir), !dir.boolValue else { continue }
+      hash.update(data: Data(f.dropFirst(base.count).utf8))
+      hash.update(data: try Data(contentsOf: URL(fileURLWithPath: f), options: .mappedIfSafe))
+    }
+    return hash.finalize().prefix(8).map { String(format: "%02x", $0) }.joined()
   }
 }

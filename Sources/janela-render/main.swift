@@ -118,7 +118,17 @@ if a.count > 1, a[1] == "selftest" {
   // Model
   let model = URL(fileURLWithPath: a.count > 3 ? a[3] : "Resources/rvm.mlpackage")
   let tmpCache = FileManager.default.temporaryDirectory.appendingPathComponent("janela-cache-\(UUID().uuidString)")
+  let tmpA = tmpCache.appendingPathComponent("a/m.mlpackage"), tmpB = tmpCache.appendingPathComponent("b/m.mlpackage")
+  for u in [tmpA, tmpB] {
+    try FileManager.default.createDirectory(at: u.appendingPathComponent("Data"), withIntermediateDirectories: true)
+    try "weights".write(to: u.appendingPathComponent("Data/w.bin"), atomically: true, encoding: .utf8)
+  }
+  check("equal content keys the same", try MatteEngine.contentKey(tmpA) == MatteEngine.contentKey(tmpB))
+  try "weights2".write(to: tmpB.appendingPathComponent("Data/w.bin"), atomically: true, encoding: .utf8)
+  check("a re-export changes the key", try MatteEngine.contentKey(tmpA) != MatteEngine.contentKey(tmpB))
   let compiledModel = try MatteEngine.compiled(model, cacheDirectory: tmpCache)
+  check("compiled name carries the key", compiledModel.lastPathComponent.contains(try MatteEngine.contentKey(model)))
+  check("compiled model is reused", try MatteEngine.compiled(model, cacheDirectory: tmpCache).path == compiledModel.path)
   let comp = try Compositor()
   let eng = try MatteEngine(compiledModel: compiledModel)
   check("fresh state matches the model", eng.stateMatchesModel)
