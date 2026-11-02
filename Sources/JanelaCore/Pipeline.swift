@@ -29,6 +29,8 @@ public final class Pipeline: @unchecked Sendable {
 
   public var stats: Stats { lock.withLock { $0.stats } }
   public var modelReady: Bool { lock.withLock { $0.engine != nil } }
+  /// False once loaded, and while loading.
+  public var needsLoad: Bool { lock.withLock { ($0.engine == nil || $0.compositor == nil) && !$0.loading } }
   /// Begins keeping every frame's times in milliseconds, for measurement.
   public func recordTimings() { lock.withLock { $0.timings = [] } }
   public func takeTimings() -> [(matte: Double, total: Double)] {
@@ -42,25 +44,30 @@ public final class Pipeline: @unchecked Sendable {
   }
 
   /// Loads everything that isn't loaded yet, in the background. Safe to call repeatedly.
+  /// The GPU work and the model share nothing, so neither waits for the other. Their order can't
+  /// show the camera: `process` needs the compositor to output anything, and the engine to use a frame.
   public func prepare() {
     let go = lock.withLock { s -> Bool in
-      if s.engine != nil || s.loading { return false }
+      if (s.engine != nil && s.compositor != nil) || s.loading { return false }
       s.loading = true; return true
     }
     if !go { return }
     loader.async { [self] in
-      do {
-        if lock.withLock({ $0.compositor }) == nil {
-          let c = try Compositor()
-          scenes.attach(c.device)
-          lock.withLock { $0.compositor = c }
-        }
-        let e = try MatteEngine(compiledModel: model)
-        lock.withLock { $0.engine = e; $0.loading = false }
-      } catch {
-        lock.withLock { $0.loading = false }
-        onLoadFailure?(error)
+      let failure = OSAllocatedUnfairLock<Error?>(initialState: nil)
+      DispatchQueue.concurrentPerform(iterations: 2) { stage in
+        do {
+          if stage == 0, lock.withLock({ $0.compositor }) == nil {
+            let c = try Compositor()
+            scenes.attach(c.device)
+            lock.withLock { $0.compositor = c }
+          } else if stage == 1, lock.withLock({ $0.engine }) == nil {
+            let e = try MatteEngine(compiledModel: model)
+            lock.withLock { $0.engine = e }
+          }
+        } catch { failure.withLock { $0 = error } }
       }
+      lock.withLock { $0.loading = false }
+      if let error = failure.withLock({ $0 }) { onLoadFailure?(error) }
     }
   }
 

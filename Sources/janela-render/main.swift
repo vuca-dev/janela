@@ -177,8 +177,10 @@ if a.count > 1, a[1] == "selftest" {
   check("state after reset matches the model", eng.stateMatchesModel)
   check("state carries between frames", run1 != run2)
   check("reset restores the first-frame result", output(try eng.predict(bands, small: small)) == run1)
-  // Lazy loading
-  let lazy = Pipeline(compiledModel: compiledModel, scenesRoot: root)
+  // Lazy loading. macOS prepares a model per path, so a fresh copy guarantees a slow load to watch.
+  let slowModel = tmpCache.appendingPathComponent("slow-\(UUID().uuidString).mlmodelc")
+  try FileManager.default.copyItem(at: compiledModel, to: slowModel)
+  let lazy = Pipeline(compiledModel: slowModel, scenesRoot: root)
   let lazyKey = SceneKey(scene: "room", weather: .clear, phase: .noon)
   lazy.scenes.select(lazyKey); lazy.scenes.transition(to: lazyKey); usleep(200_000)
   check("nothing decodes before first use", lazy.scenes.frame() == nil && !lazy.modelReady)
@@ -202,11 +204,13 @@ if a.count > 1, a[1] == "selftest" {
   check("background shows while the model loads (\(lazy.stats.backgroundFrames) frames)", lazy.stats.backgroundFrames > 0)
   check("the camera frame never shows before the model is ready", !leaked)
   check("matte frames follow once the model is ready", lazy.modelReady && lazy.stats.frames >= 5)
+  check("nothing left to load after loading", !lazy.needsLoad)
   let broken = Pipeline(compiledModel: tmpCache.appendingPathComponent("missing.mlmodelc"), scenesRoot: root)
   let failed = DispatchSemaphore(value: 0)
   broken.onLoadFailure = { _ in failed.signal() }
   broken.scenes.select(lazyKey); broken.prepare()
   check("a model that can't load reports it", failed.wait(timeout: .now() + 10) == .success)
+  check("a failed load can be retried", broken.needsLoad)
   try? FileManager.default.removeItem(at: tmpCache)
   // Benchmark clip
   let clipURL = FileManager.default.temporaryDirectory.appendingPathComponent("janela-synth-\(UUID().uuidString).mov")
