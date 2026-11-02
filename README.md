@@ -48,9 +48,11 @@ scenes keep changing between refreshes and while offline.
 Needs Apple Silicon, macOS 14+, and the Command Line Tools. Xcode isn't required.
 
     python3 -m venv research/.venv
-    research/.venv/bin/pip install torch coremltools
+    research/.venv/bin/pip install -r research/requirements.txt
     git clone https://github.com/PeterL1n/RobustVideoMatting third_party/RVM
-    # download rvm_mobilenetv3.pth from that repo's v1.0.0 release into models/
+    git -C third_party/RVM checkout 53d74c6826735f01f4406b5ca9075eee27bec094
+    # download rvm_mobilenetv3.pth from that repo's v1.0.0 release into models/, then check it:
+    echo "3c7c1d92033f7c38d6577c481d13a195d7d80a159b960f4f3119ac7b534cf4f8  models/rvm_mobilenetv3.pth" | shasum -a 256 -c
     research/.venv/bin/python research/export.py 1280 720 0.375 rvm_mp_720
     # first janela-render run compiles the model into ~/Library/Caches/Janela
     ./build_app.sh

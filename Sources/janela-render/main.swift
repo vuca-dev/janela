@@ -132,7 +132,7 @@ if a.count > 1, a[1] == "selftest" {
 }
 guard a.count >= 7 else { print("usage"); exit(2) }
 let parts = a[4].split(separator: "/").map(String.init)
-let units: MLComputeUnits = a.count > 7 ? (a[7] == "cpuAndNE" ? .cpuAndNeuralEngine : a[7] == "cpuAndGPU" ? .cpuAndGPU : .all) : .all
+let units: MLComputeUnits = a.count > 7 ? (a[7] == "cpuAndGPU" ? .cpuAndGPU : a[7] == "all" ? .all : .cpuAndNeuralEngine) : .cpuAndNeuralEngine
 let cache = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Caches/Janela")
 let engine = try MatteEngine(compiledModel: MatteEngine.compiled(URL(fileURLWithPath: a[2]), cacheDirectory: cache), computeUnits: units)
 let comp = try Compositor()

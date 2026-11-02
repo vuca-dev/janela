@@ -25,8 +25,8 @@ public enum OBSSetup {
   public static let extensionSettings = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!
   public static let cameraPrivacySettings = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera")!
 
+  /// Only the standard location, never a lookup by bundle ID, which any app could claim.
   public static func installedURL() -> URL? {
-    if let u = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) { return u }
     let u = URL(fileURLWithPath: "/Applications/OBS.app")
     return FileManager.default.fileExists(atPath: u.path) ? u : nil
   }
@@ -58,6 +58,7 @@ public enum OBSSetup {
   /// OBS's plugin asks macOS to activate the extension as it loads.
   @MainActor public static func launchHidden() async throws -> NSRunningApplication? {
     guard let url = installedURL() else { throw Failure.noDownload }
+    guard verifySignature(at: url) else { throw Failure.badSignature }
     if NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first != nil { return nil } // the user's own session
     try prepareProfile()
     let c = NSWorkspace.OpenConfiguration()
@@ -109,7 +110,7 @@ public enum OBSSetup {
     let r = "anchor apple generic and identifier \"\(bundleID)\" and certificate leaf[subject.OU] = \"\(team)\""
     guard SecStaticCodeCreateWithPath(app as CFURL, [], &code) == errSecSuccess, let code,
           SecRequirementCreateWithString(r as CFString, [], &req) == errSecSuccess else { return false }
-    return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate), req) == errSecSuccess
+    return SecStaticCodeCheckValidity(code, SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate).union(.enforceRevocationChecks), req) == errSecSuccess
   }
 
   static func sha256(of url: URL) throws -> String {

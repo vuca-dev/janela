@@ -2,10 +2,13 @@
 # Builds and ad-hoc signs ./build/Janela.app
 set -e
 cd "$(dirname "$0")"
-swift build -c release --product Janela
+# JANELA_TEST=1 builds a test copy with replay and demo options. Never ship that build.
+FLAGS=(); [ -n "$JANELA_TEST" ] && FLAGS=(-Xswiftc -DJANELA_TEST)
+swift build -c release --product Janela "${FLAGS[@]}"
 swift build -c release --product janela-render
 A=build.noindex/Janela.app; rm -rf $A; mkdir -p $A/Contents/{MacOS,Resources}
 cp .build/release/Janela $A/Contents/MacOS/
+strip -x $A/Contents/MacOS/Janela
 cp -R ~/Library/Caches/Janela/rvm_mp_720.mlmodelc $A/Contents/Resources/rvm.mlmodelc
 cp -R scenes $A/Contents/Resources/scenes
 cp assets/Janela.icns $A/Contents/Resources/Janela.icns
@@ -19,5 +22,5 @@ cat > $A/Contents/Info.plist <<P
 <key>NSCameraUsageDescription</key><string>Janela places you in your background. Video stays on this Mac.</string>
 </dict></plist>
 P
-codesign --force --deep -s - $A
+codesign --force --options runtime --entitlements Janela.entitlements -s - $A
 du -sh $A

@@ -34,8 +34,6 @@ struct Config: Codable {
   var probeCount = 0
   var lastProbe = Date()
   var watchTimer: Timer?
-  lazy var alwaysOn = UserDefaults.standard.bool(forKey: "alwaysOn")
-  lazy var probeEvery: TimeInterval = { let v = UserDefaults.standard.double(forKey: "probeEvery"); return v > 0 ? v : 120 }()
   var forecast: Forecast?
   var lastAttempt = Date.distantPast
   var setup: SetupWindow?
@@ -46,8 +44,19 @@ struct Config: Codable {
   var turnOnStarted = Date.distantPast
   static let forecastURL = Config.url.deletingLastPathComponent().appendingPathComponent("forecast.json")
   var message: String?
+  #if JANELA_TEST
   let filePath = UserDefaults.standard.string(forKey: "file")      // -file <path> replays a clip
   let statsPath = UserDefaults.standard.string(forKey: "stats")    // -stats <path> appends one line a second
+  let demoQuery = UserDefaults.standard.string(forKey: "setupDemo")
+  lazy var alwaysOn = UserDefaults.standard.bool(forKey: "alwaysOn")
+  lazy var probeEvery: TimeInterval = { let v = UserDefaults.standard.double(forKey: "probeEvery"); return v > 0 ? v : 120 }()
+  #else
+  let filePath: String? = nil
+  let statsPath: String? = nil
+  let demoQuery: String? = nil
+  let alwaysOn = false
+  let probeEvery: TimeInterval = 120
+  #endif
 
   func applicationDidFinishLaunching(_ n: Notification) {
     status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -72,7 +81,7 @@ struct Config: Codable {
     tick()
     if let statsPath { startStats(statsPath) }
     if config.enabled { setRunning(true) }
-    if config.setupDone != true || UserDefaults.standard.string(forKey: "setupDemo") != nil { showSetup(firstRun: true) }
+    if config.setupDone != true || demoQuery != nil { showSetup(firstRun: true) }
   }
 
   func applicationShouldHandleReopen(_ a: NSApplication, hasVisibleWindows v: Bool) -> Bool {
@@ -190,7 +199,9 @@ struct Config: Codable {
       w?.window.close()
     }
     w.show()
-    if let d = UserDefaults.standard.string(forKey: "setupDemo") { runDemo(d, m, w) }
+    #if JANELA_TEST
+    if let d = demoQuery { runDemo(d, m, w) }
+    #endif
   }
 
   func currentStage() -> CameraStage {
@@ -263,6 +274,7 @@ struct Config: Codable {
 
   func setScene(_ s: String) { config.scene = s; config.save(); updateScene(immediate: true) }
 
+  #if JANELA_TEST
   /// -setupDemo <query> -setupShots <prefix>: drives the real window for tests, without saving.
   func runDemo(_ q: String, _ m: SetupModel, _ w: SetupWindow) {
     let shots = UserDefaults.standard.string(forKey: "setupShots") ?? "/tmp/janela"
@@ -282,6 +294,7 @@ struct Config: Codable {
       print("place:", m.place?.name ?? "nil", "scene:", m.scene); exit(0)
     }
   }
+  #endif
 
   func menuNeedsUpdate(_ m: NSMenu) {
     m.removeAllItems()
