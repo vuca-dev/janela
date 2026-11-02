@@ -356,6 +356,10 @@ struct Config: Codable {
 extension JSONEncoder { static var iso: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e } }
 extension JSONDecoder { static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
 
+#if JANELA_TEST
+runMeasurement(CommandLine.arguments)
+#endif
+
 // Two copies would both capture the camera and write into one sink, which corrupts the picture.
 // An exclusive lock covers every launch path, and the OS releases it even after a crash.
 try? FileManager.default.createDirectory(at: Config.url.deletingLastPathComponent(), withIntermediateDirectories: true)
