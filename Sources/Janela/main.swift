@@ -52,13 +52,13 @@ struct Config: Codable {
   let statsPath = UserDefaults.standard.string(forKey: "stats")    // -stats <path> appends one line a second
   let demoQuery = UserDefaults.standard.string(forKey: "setupDemo")
   lazy var alwaysOn = UserDefaults.standard.bool(forKey: "alwaysOn")
-  lazy var probeEvery: TimeInterval = { let v = UserDefaults.standard.double(forKey: "probeEvery"); return v > 0 ? v : 120 }()
+  lazy var probeEvery: TimeInterval = { let v = UserDefaults.standard.double(forKey: "probeEvery"); return v > 0 ? v : 60 }()
   #else
   let filePath: String? = nil
   let statsPath: String? = nil
   let demoQuery: String? = nil
   let alwaysOn = false
-  let probeEvery: TimeInterval = 120
+  let probeEvery: TimeInterval = 60
   #endif
 
   func applicationDidFinishLaunching(_ n: Notification) {
@@ -154,13 +154,11 @@ struct Config: Codable {
       message = nil; activate()
     } else if running, !alwaysOn, !probing, Date().timeIntervalSince(lastProbe) >= probeEvery {
       probing = true; lastProbe = Date(); probeCount += 1
-      sink.stop()
-      // The sink was the only stream if the device now goes quiet.
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+      sink.checkForOtherReaders { others in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
         guard let self else { return }
         probing = false
-        if VirtualCameraSink.runningSomewhere(named: name) == false { deactivate() } else { try? sink.start() }
-      }
+        if others == false { deactivate() }
+      } } }
     }
   }
 

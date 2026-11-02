@@ -52,12 +52,15 @@ public final class VirtualCameraSink: @unchecked Sendable {
   /// How long the sink may refuse every frame before we assume the extension died under us.
   private static let stallTimeout: TimeInterval = 3
   private static let pollInterval: TimeInterval = 1
+  /// Longest a check waits for frames before going ahead without one to follow.
+  private static let checkFallback: TimeInterval = 0.1
 
   private struct Shared {
     var connection: Connection?
     var busy = false
     var status = Status()
     var queueFullSince: Date?
+    var pendingCheck: (@Sendable (Bool?) -> Void)?
   }
 
   public let preferredNames: [String]
@@ -120,16 +123,28 @@ public final class VirtualCameraSink: @unchecked Sendable {
           state.status.lastError = message
         }
       }
+      runPendingCheck()
     }
   }
 
-  /// Detaches and disarms. Blocks until pending work has finished. Safe to call repeatedly.
   /// True while any process has this device's streams running, including our own sink.
   public static func runningSomewhere(named name: String) -> Bool? {
     guard let d = CameraCatalog.device(named: name) else { return nil }
     return CMIOProperty.uint32(d.id, kCMIODevicePropertyDeviceIsRunningSomewhere).map { $0 != 0 }
   }
 
+  /// Reports whether anything but our sink has the device running; nil if that can't be read.
+  ///
+  /// Nothing tells a reader from our own sink while the sink runs, in this process or any other, so
+  /// the sink has to stop for a moment. That happens right after a frame, between frames, and lasts
+  /// a few milliseconds. No frame is lost, though the extension can slip in one placeholder frame
+  /// if its own timer lands inside the gap. `done` runs on the sink's work queue.
+  public func checkForOtherReaders(_ done: @escaping @Sendable (Bool?) -> Void) {
+    shared.withLock { $0.pendingCheck = done }
+    work.asyncAfter(deadline: .now() + Self.checkFallback) { [self] in runPendingCheck() }
+  }
+
+  /// Detaches and disarms. Blocks until pending work has finished. Safe to call repeatedly.
   public func stop() {
     work.sync {
       watchdog?.cancel()
@@ -147,6 +162,21 @@ public final class VirtualCameraSink: @unchecked Sendable {
   }
 
   // MARK: Work queue only
+
+  private func runPendingCheck() {
+    let (done, connection) = shared.withLock { state in
+      defer { state.pendingCheck = nil }
+      return (state.pendingCheck, state.connection)
+    }
+    guard let done else { return }
+    guard let connection else {
+      done(bestDevice().flatMap { CMIOProperty.uint32($0.id, kCMIODevicePropertyDeviceIsRunningSomewhere) }.map { $0 != 0 })
+      return
+    }
+    let result = connection.othersRunning()
+    if !result.restarted { disconnect() }  // the watchdog re-attaches
+    done(result.others)
+  }
 
   private func armWatchdog() {
     let timer = DispatchSource.makeTimerSource(queue: work)
@@ -248,6 +278,9 @@ private final class Connection: @unchecked Sendable {
   private var pool: CVPixelBufferPool?
   private var formatDescription: CMFormatDescription?
   private var lastPTS = CMTime.invalid
+  /// A device with no other streams reads as stopped within about a millisecond of our stop.
+  private static let settleTime: TimeInterval = 0.0015
+  private static let drainTime: TimeInterval = 0.008
 
   init(device: CameraDeviceInfo, sink: CameraStreamInfo) throws {
     deviceID = device.id
@@ -340,6 +373,24 @@ private final class Connection: @unchecked Sendable {
       return .queueFull
     }
     return .enqueued
+  }
+
+  /// Lets the last frame reach the extension, then stops our stream for as short a time as a
+  /// reading can be trusted. Reading true too early only delays the answer to the next check.
+  func othersRunning() -> (others: Bool?, restarted: Bool) {
+    func read() -> Bool? {
+      CMIOProperty.uint32(deviceID, kCMIODevicePropertyDeviceIsRunningSomewhere).map { $0 != 0 }
+    }
+    let drained = Date().addingTimeInterval(Self.drainTime)
+    while CMSimpleQueueGetCount(queue) > 0, Date() < drained { usleep(200) }
+    CMIODeviceStopStream(deviceID, streamID)
+    let settled = Date().addingTimeInterval(Self.settleTime)
+    var others = read()
+    while others == true, Date() < settled {
+      usleep(100)
+      others = read()
+    }
+    return (others, CMIODeviceStartStream(deviceID, streamID) == noErr)
   }
 
   func close() {
