@@ -7,6 +7,12 @@ import Metal
 // Offline harness: runs a clip through the production engine.
 // janela-render <input> <model> <scenes-dir> <scene/weather/phase> <out.mp4> <alpha.raw> [cpuAndNE|all|cpuAndGPU]
 let a = CommandLine.arguments
+if a.count > 3, a[1] == "compile" {   // the build compiles the model here, because Core ML's compiler ships with macOS, not the Command Line Tools
+  let dst = URL(fileURLWithPath: a[3])
+  try? FileManager.default.removeItem(at: dst)
+  try FileManager.default.moveItem(at: try MLModel.compileModel(at: URL(fileURLWithPath: a[2])), to: dst)
+  exit(0)
+}
 if a.count > 1, a[1] == "obs-hidden" {   // the app's real launch and close, on this Mac's profile
   let app = try await OBSSetup.launchHidden()
   print("launched:", app != nil, "state:", OBSSetup.extensionState())
@@ -109,6 +115,48 @@ if a.count > 1, a[1] == "selftest" {
     let f = try await WeatherService.forecast(Place(name: n, latitude: la, longitude: lo))
     check("forecast \(n): \(f.hours.count)h, \(f.weather(at: Date()).map(\.rawValue) ?? "nil")", f.hours.count >= 24 && f.weather(at: Date()) != nil)
   }
+  // Model
+  let model = URL(fileURLWithPath: a.count > 3 ? a[3] : "Resources/rvm.mlpackage")
+  let tmpCache = FileManager.default.temporaryDirectory.appendingPathComponent("janela-cache-\(UUID().uuidString)")
+  let compiledModel = try MatteEngine.compiled(model, cacheDirectory: tmpCache)
+  let comp = try Compositor()
+  let eng = try MatteEngine(compiledModel: compiledModel)
+  check("fresh state matches the model", eng.stateMatchesModel)
+  func bgra(_ fill: (UnsafeMutablePointer<UInt8>, Int) -> Void) -> CVPixelBuffer {
+    var pb: CVPixelBuffer?
+    CVPixelBufferCreate(nil, workingWidth, workingHeight, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any](), kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary, &pb)
+    CVPixelBufferLockBaseAddress(pb!, []); let row = CVPixelBufferGetBytesPerRow(pb!)
+    let p = CVPixelBufferGetBaseAddress(pb!)!.assumingMemoryBound(to: UInt8.self)
+    for y in 0..<workingHeight { fill(p + y * row, y) }
+    CVPixelBufferUnlockBaseAddress(pb!, []); return pb!
+  }
+  // Red, green and blue bands: the planes must come back in R, G, B order and the right place.
+  let bands = bgra { p, y in
+    let (r, g, b): (UInt8, UInt8, UInt8) = y < 360 ? (255, 0, 0) : y < 720 ? (0, 255, 0) : (0, 0, 255)
+    for x in 0..<workingWidth { p[x * 4] = b; p[x * 4 + 1] = g; p[x * 4 + 2] = r; p[x * 4 + 3] = 255 }
+  }
+  let small = eng.inputBuffer()!
+  check("GPU writes planar input", comp.downscale(bands, into: small))
+  CVPixelBufferLockBaseAddress(small, .readOnly)
+  let half = CVPixelBufferGetBaseAddress(small)!.assumingMemoryBound(to: Float16.self), rowLength = CVPixelBufferGetBytesPerRow(small) / 2
+  func plane(_ c: Int, _ y: Int) -> Float { Float(half[(c * eng.height + y) * rowLength + 640]) }
+  check("planes are R, G, B", abs(plane(0, 100) - 1) < 0.01 && plane(1, 100) < 0.01 && plane(2, 100) < 0.01
+    && plane(0, 360) < 0.01 && abs(plane(1, 360) - 1) < 0.01 && plane(2, 360) < 0.01
+    && plane(0, 640) < 0.01 && plane(1, 640) < 0.01 && abs(plane(2, 640) - 1) < 0.01)
+  CVPixelBufferUnlockBaseAddress(small, .readOnly)
+  func output(_ r: MatteEngine.Result) -> [Float16] {
+    CVPixelBufferLockBaseAddress(r.foreground, .readOnly); defer { CVPixelBufferUnlockBaseAddress(r.foreground, .readOnly) }
+    let n = CVPixelBufferGetDataSize(r.foreground) / 2
+    return Array(UnsafeBufferPointer(start: CVPixelBufferGetBaseAddress(r.foreground)!.assumingMemoryBound(to: Float16.self), count: n))
+  }
+  let run1 = output(try eng.predict(bands, small: small))
+  check("state after a frame matches the model", eng.stateMatchesModel)
+  let run2 = output(try eng.predict(bands, small: small))
+  try eng.reset()
+  check("state after reset matches the model", eng.stateMatchesModel)
+  check("state carries between frames", run1 != run2)
+  check("reset restores the first-frame result", output(try eng.predict(bands, small: small)) == run1)
+  try? FileManager.default.removeItem(at: tmpCache)
   // OBS setup
   let ext = "com.obsproject.obs-studio.mac-camera-extension (33.0.1/40954849292)\tOBS Virtual Camera\t"
   check("extension active", OBSSetup.parseState("*\t*\t2MMRE5MTB8\t\(ext)[activated enabled]") == .active)

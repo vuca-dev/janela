@@ -23,6 +23,15 @@ struct CompositeParams {
 
 inline float luminance(float3 c) { return dot(c, float3(0.2126, 0.7152, 0.0722)); }
 
+// Bilinear downscale of BGRA into the model's planar input: R, G and B stacked vertically.
+kernel void planar(texture2d<float, access::sample> src [[texture(0)]],
+                   texture2d<float, access::write> dst [[texture(1)]],
+                   uint2 gid [[thread_position_in_grid]]) {
+    uint h = dst.get_height() / 3;
+    float2 uv = (float2(gid.x, gid.y % h) + 0.5) / float2(dst.get_width(), h);
+    dst.write(src.sample(linearClamp, uv)[gid.y / h], gid);
+}
+
 // 4x4 box downsample of the (linear-read) source into a quarter-size luma plane.
 kernel void lumaDownsample(texture2d<float, access::sample> src [[texture(0)]],
                            texture2d<float, access::write> dst [[texture(1)]],
@@ -74,7 +83,7 @@ kernel void stabilize(texture2d<float, access::sample> pha [[texture(0)]],
                       constant StabilizerParams &p [[buffer(0)]],
                       uint2 gid [[thread_position_in_grid]]) {
     float2 uv = (float2(gid) + 0.5) / float2(out.get_width(), out.get_height());
-    float a = pha.sample(linearClamp, uv).r;
+    float a = saturate(pha.sample(linearClamp, uv).r);
     if (p.first > 0.5) { out.write(float4(a), gid); return; }
     float prev = hist.read(gid).r;
     float mo = smoothstep(p.motionLo, p.motionHi, motion.sample(linearClamp, uv).r);
@@ -89,6 +98,20 @@ inline float3 oetf(float3 c) {
 
 // Interleaved gradient noise: decorrelates banding before the meeting app's H.264.
 inline float ign(float2 p) { return fract(52.9829189 * fract(dot(p, float2(0.06711056, 0.00583715)))); }
+
+inline float3 eotf(float3 c) {
+    return select(pow((c + 0.055) / 1.055, 2.4), c / 12.92, c <= 0.04045);
+}
+
+// The model's foreground, from its stacked planes, in linear light. The row clamp keeps
+// filtering inside one plane.
+inline float3 foreground(texture2d<float, access::sample> f, float2 uv) {
+    float e = 1.5 / f.get_height();     // half a texel of one plane, in stacked units of 1/3
+    float y = clamp(uv.y, e, 1.0 - e) / 3.0;
+    return eotf(saturate(float3(f.sample(linearClamp, float2(uv.x, y)).r,
+                                f.sample(linearClamp, float2(uv.x, y + 1.0 / 3.0)).r,
+                                f.sample(linearClamp, float2(uv.x, y + 2.0 / 3.0)).r)));
+}
 
 // Compositing happens in linear light. Sources are sampled through _srgb views.
 kernel void composite(texture2d<float, access::read> src [[texture(0)]],
@@ -111,7 +134,7 @@ kernel void composite(texture2d<float, access::read> src [[texture(0)]],
     } else {
         // The model's foreground removes the old room's colour from soft edges.
         float2 uv = (float2(gid) + 0.5) / float2(out.get_width(), out.get_height());
-        float3 f = mix(fgr.sample(linearClamp, uv).rgb, src.read(gid).rgb, smoothstep(0.96, 1.0, a));
+        float3 f = mix(foreground(fgr, uv), src.read(gid).rgb, smoothstep(0.96, 1.0, a));
         c = f * a + bg * (1.0 - a);
     }
     float3 e = oetf(saturate(c));

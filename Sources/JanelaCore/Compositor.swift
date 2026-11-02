@@ -23,7 +23,7 @@ public final class Compositor {
   public var showMatte = false
   private let queue: MTLCommandQueue
   private let textures: TextureCache
-  private let lumaDownsample, lumaBlur, motionField, stabilize, composite: MTLComputePipelineState
+  private let lumaDownsample, lumaBlur, motionField, stabilize, composite, planar: MTLComputePipelineState
   private let scaler: MPSImageBilinearScale
   private let outPool = makePool(kCVPixelFormatType_32BGRA, minimum: 5)
   private let workPool = makePool(kCVPixelFormatType_32BGRA, minimum: 5)
@@ -46,6 +46,7 @@ public final class Compositor {
     }
     lumaDownsample = try pipe("lumaDownsample"); lumaBlur = try pipe("lumaBlur")
     motionField = try pipe("motionField"); stabilize = try pipe("stabilize"); composite = try pipe("composite")
+    planar = try pipe("planar")
     scaler = MPSImageBilinearScale(device: dev)
     func tex(_ w: Int, _ h: Int, _ f: MTLPixelFormat) -> MTLTexture {
       let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: f, width: w, height: h, mipmapped: false)
@@ -79,14 +80,14 @@ public final class Compositor {
     return dst
   }
 
-  /// GPU downscale to the model's input size.
+  /// GPU downscale to the model's input size, as planar RGB.
   public func downscale(_ src: CVPixelBuffer, into dst: CVPixelBuffer) -> Bool {
-    guard let (s, st) = textures.texture(src, .bgra8Unorm), let (d, dt) = textures.texture(dst, .bgra8Unorm),
-          let cb = queue.makeCommandBuffer() else { return false }
-    let x = Double(d.width) / Double(s.width)
-    var t = MPSScaleTransform(scaleX: x, scaleY: x, translateX: 0, translateY: 0)
-    withUnsafePointer(to: &t) { scaler.scaleTransform = $0; scaler.encode(commandBuffer: cb, sourceTexture: s, destinationTexture: d) }
-    scaler.scaleTransform = nil
+    guard let (s, st) = textures.texture(src, .bgra8Unorm), let (d, dt) = textures.texture(dst, .r16Float),
+          let cb = queue.makeCommandBuffer(), let e = cb.makeComputeCommandEncoder() else { return false }
+    e.setComputePipelineState(planar); e.setTexture(s, index: 0); e.setTexture(d, index: 1)
+    e.dispatchThreads(MTLSize(width: d.width, height: d.height, depth: 1),
+                      threadsPerThreadgroup: MTLSize(width: planar.threadExecutionWidth, height: 1, depth: 1))
+    e.endEncoding()
     cb.addCompletedHandler { _ in _ = (st, dt) }
     cb.commit(); cb.waitUntilCompleted()
     return true
@@ -96,8 +97,8 @@ public final class Compositor {
   public func render(_ r: MatteEngine.Result, scene: SceneFrame, completion: @escaping (CVPixelBuffer) -> Void) {
     guard let out = poolBuffer(outPool),
           let (src, t1) = textures.texture(r.source, .bgra8Unorm_srgb),
-          let (fgr, t2) = textures.texture(r.foreground, .bgra8Unorm_srgb),
-          let (pha, t3) = textures.texture(r.alpha, .r8Unorm),
+          let (fgr, t2) = textures.texture(r.foreground, .r16Float),
+          let (pha, t3) = textures.texture(r.alpha, .r16Float),
           let (dst, t4) = textures.texture(out, .bgra8Unorm),
           let cb = queue.makeCommandBuffer(), let e = cb.makeComputeCommandEncoder() else { return }
     func run(_ p: MTLComputePipelineState, _ ts: [MTLTexture], grid: MTLTexture) {

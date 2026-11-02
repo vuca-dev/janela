@@ -9,7 +9,7 @@ swift build -c release --product janela-render
 A=build.noindex/Janela.app; rm -rf $A; mkdir -p $A/Contents/{MacOS,Resources}
 cp .build/release/Janela $A/Contents/MacOS/
 strip -x $A/Contents/MacOS/Janela
-cp -R ~/Library/Caches/Janela/rvm_mp_720.mlmodelc $A/Contents/Resources/rvm.mlmodelc
+.build/release/janela-render compile Resources/rvm.mlpackage $A/Contents/Resources/rvm.mlmodelc
 cp -R scenes $A/Contents/Resources/scenes
 cp assets/Janela.icns $A/Contents/Resources/Janela.icns
 cat > $A/Contents/Info.plist <<P
