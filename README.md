@@ -24,8 +24,8 @@ light and weather match your own.
 ## Privacy
 
 All video stays on your Mac. The location box searches with Apple Maps as you type, and
-weather comes from Open-Meteo using coordinates rounded to about a kilometre. Nothing runs
-while no app reads the camera, and the camera light stays off.
+weather comes from Open-Meteo using coordinates rounded to about a kilometre. The camera only
+runs while an app reads it, so otherwise its light stays off.
 
 ## Setup
 
@@ -58,6 +58,23 @@ and GPU load, energy, and other processes weren't measured. After a call, memory
 To reproduce, with OBS's extension on and Janela quit:
 
     scripts/benchmark.sh
+
+At launch and after wake, Janela runs a low-priority copy of itself that prepares the model and
+shaders, then exits. That copy doesn't use the camera. It took 0.3 s and 15 MB when already
+prepared, and 5 to 7 s and 26 MB the first time. macOS keeps the result on disk, so a call starts
+faster without Janela holding the model. A call that starts meanwhile stops it.
+
+| Model and shaders ready to first matte frame | Before | Now |
+| --- | --- | --- |
+| Nothing prepared yet | 2.8 s | 2.1 s |
+| Prepared | 0.16 s | 0.10 to 0.14 s |
+
+Measured on the same Mac at commit `41ca88e`, five runs each for now and three for before, on
+battery, in a fresh process with test frames at 30 fps. These times start when loading starts.
+They exclude noticing the reader, which is checked every 0.5 s, and starting the camera, which
+weren't measured. To reproduce:
+
+    scripts/first-matte.sh
 
 ## Build
 
