@@ -38,6 +38,8 @@ struct Config: Codable {
   var lastAttempt = Date.distantPast
   var setup: SetupWindow?
   var setupModel: SetupModel?
+  var requestingAccess = false
+  var accessHelpShown = false
   var setupWatch: Timer?
   var closeObserver: Any?
   var launchedOBS: NSRunningApplication?
@@ -138,12 +140,30 @@ struct Config: Codable {
   }
 
   func activate() {
-    if running { return }
+    if running || requestingAccess { return }
+    // Permission can vanish after an update, so never rely on setup having asked.
+    if filePath == nil, CameraSource.access != true {
+      if CameraSource.access == nil {
+        requestingAccess = true
+        CameraSource.request { ok in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
+          guard let self else { return }
+          requestingAccess = false; setupModel?.access = ok
+          if ok { activate() } else { showAccessHelp() }
+        } } }
+      } else { showAccessHelp() }
+      return
+    }
     pipeline.reset()
     if source == nil { source = filePath.map { FileSource(url: URL(fileURLWithPath: $0)) } ?? CameraSource() }
     source.onFrame = { [weak self] pb, pts in self?.pipeline.ingest(pb, pts: pts) }
     try? sink.start()   // stays armed if the extension is late
     do { try source.start(); running = true; lastProbe = Date() } catch { message = "\(error)"; sink.stop() }
+  }
+
+  func showAccessHelp() {
+    message = "Camera access is off."
+    if accessHelpShown { return }
+    accessHelpShown = true; showSetup(firstRun: false); startWatchingSetup()
   }
 
   func deactivate() {
