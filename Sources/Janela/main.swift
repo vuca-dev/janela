@@ -64,10 +64,10 @@ struct Config: Codable {
     status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     status.button?.image = NSImage(systemSymbolName: "sun.horizon.fill", accessibilityDescription: "Janela")
     let menu = NSMenu(); menu.delegate = self; status.menu = menu
-    do {
-      let res = Bundle.main.resourceURL!
-      pipeline = try Pipeline(compiledModel: res.appendingPathComponent("rvm.mlmodelc"), scenesRoot: res.appendingPathComponent("scenes"))
-    } catch { message = "Could not load the model: \(error)"; return }
+    let res = Bundle.main.resourceURL!
+    pipeline = Pipeline(compiledModel: res.appendingPathComponent("rvm.mlmodelc"), scenesRoot: res.appendingPathComponent("scenes"))
+    pipeline.onLoadFailure = { error in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
+      self?.message = "Could not load the model: \(error)" } } }
     pipeline.onFrame = { [weak self] pb, pts in
       guard let self else { return }
       sink.send(pb, pts: pts)
@@ -93,12 +93,16 @@ struct Config: Codable {
   func startStats(_ path: String) {
     FileManager.default.createFile(atPath: path, contents: nil)
     let fh = FileHandle(forWritingAtPath: path)
+    FileManager.default.createFile(atPath: path + ".frames", contents: nil)
+    let frameLog = FileHandle(forWritingAtPath: path + ".frames")   // matte and total ms, one frame a line
+    pipeline.recordTimings()
     var last = 0
     Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
       guard let self else { return }
       let s = pipeline.stats, v = sink.status
-      let line = String(format: "run=%d probes=%d fps=%d dropped=%d matte=%.1f total=%.1f sinkOK=%d busy=%d full=%d dev=%@\n", running ? 1 : 0, probeCount, s.frames - last, s.dropped, s.matteMs, s.totalMs, v.enqueued, v.droppedBusy, v.droppedQueueFull, v.deviceName ?? "none")
+      let line = String(format: "run=%d probes=%d fps=%d bg=%d dropped=%d matte=%.1f total=%.1f sinkOK=%d busy=%d full=%d dev=%@\n", running ? 1 : 0, probeCount, s.frames - last, s.backgroundFrames, s.dropped, s.matteMs, s.totalMs, v.enqueued, v.droppedBusy, v.droppedQueueFull, v.deviceName ?? "none")
       last = s.frames; fh?.write(line.data(using: .utf8)!)
+      frameLog?.write(pipeline.takeTimings().map { String(format: "%.2f %.2f\n", $0.matte, $0.total) }.joined().data(using: .utf8)!)
     }
   }
 
@@ -153,6 +157,7 @@ struct Config: Codable {
       } else { showAccessHelp() }
       return
     }
+    pipeline.prepare()
     pipeline.reset()
     if source == nil { source = filePath.map { FileSource(url: URL(fileURLWithPath: $0)) } ?? CameraSource() }
     source.onFrame = { [weak self] pb, pts in self?.pipeline.ingest(pb, pts: pts) }
@@ -182,7 +187,7 @@ struct Config: Codable {
     return SceneKey(scene: scene, weather: w, phase: p)
   }
   func updateScene(immediate: Bool) {
-    if immediate { try? pipeline.scenes.show(key()) } else { pipeline.scenes.transition(to: key()) }
+    if immediate { pipeline.scenes.select(key()) } else { pipeline.scenes.transition(to: key()) }
   }
   func tick() { updateScene(immediate: false); refreshWeather() }
 

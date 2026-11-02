@@ -23,7 +23,7 @@ public final class Compositor {
   public var showMatte = false
   private let queue: MTLCommandQueue
   private let textures: TextureCache
-  private let lumaDownsample, lumaBlur, motionField, stabilize, composite, planar: MTLComputePipelineState
+  private let lumaDownsample, lumaBlur, motionField, stabilize, composite, background, planar: MTLComputePipelineState
   private let scaler: MPSImageBilinearScale
   private let outPool = makePool(kCVPixelFormatType_32BGRA, minimum: 5)
   private let workPool = makePool(kCVPixelFormatType_32BGRA, minimum: 5)
@@ -46,7 +46,7 @@ public final class Compositor {
     }
     lumaDownsample = try pipe("lumaDownsample"); lumaBlur = try pipe("lumaBlur")
     motionField = try pipe("motionField"); stabilize = try pipe("stabilize"); composite = try pipe("composite")
-    planar = try pipe("planar")
+    background = try pipe("background"); planar = try pipe("planar")
     scaler = MPSImageBilinearScale(device: dev)
     func tex(_ w: Int, _ h: Int, _ f: MTLPixelFormat) -> MTLTexture {
       let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: f, width: w, height: h, mipmapped: false)
@@ -91,6 +91,21 @@ public final class Compositor {
     cb.addCompletedHandler { _ in _ = (st, dt) }
     cb.commit(); cb.waitUntilCompleted()
     return true
+  }
+
+  /// The background alone, shown while the model loads. No camera pixels are involved.
+  public func renderBackground(scene: SceneFrame, completion: @escaping (CVPixelBuffer) -> Void) {
+    guard let out = poolBuffer(outPool), let (dst, t) = textures.texture(out, .bgra8Unorm),
+          let cb = queue.makeCommandBuffer(), let e = cb.makeComputeCommandEncoder() else { return }
+    var cp = CompositeParams(bgMix: scene.mix, lo: 0, hi: 1, frame: frame, showMatte: 0)
+    e.setComputePipelineState(background)
+    e.setBytes(&cp, length: MemoryLayout<CompositeParams>.size, index: 0)
+    e.setTexture(scene.a, index: 0); e.setTexture(scene.b, index: 1); e.setTexture(dst, index: 2)
+    e.dispatchThreads(MTLSize(width: dst.width, height: dst.height, depth: 1),
+                      threadsPerThreadgroup: MTLSize(width: background.threadExecutionWidth, height: 1, depth: 1))
+    e.endEncoding()
+    cb.addCompletedHandler { _ in _ = t; completion(out) }
+    cb.commit()
   }
 
   /// Encodes one frame. `completion` runs on a Metal thread once `out` is ready.

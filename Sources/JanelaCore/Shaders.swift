@@ -141,4 +141,14 @@ kernel void composite(texture2d<float, access::read> src [[texture(0)]],
     float n = (ign(float2(gid) + float(p.frame % 64) * 5.588238) - 0.5) / 255.0;
     out.write(float4(saturate(e + n), 1), gid);
 }
+
+kernel void background(texture2d<float, access::read> bgA [[texture(0)]],
+                       texture2d<float, access::read> bgB [[texture(1)]],
+                       texture2d<float, access::write> out [[texture(2)]],
+                       constant CompositeParams &p [[buffer(0)]],
+                       uint2 gid [[thread_position_in_grid]]) {
+    float3 e = oetf(saturate(mix(bgA.read(gid).rgb, bgB.read(gid).rgb, p.bgMix)));
+    float n = (ign(float2(gid) + float(p.frame % 64) * 5.588238) - 0.5) / 255.0;
+    out.write(float4(saturate(e + n), 1), gid);
+}
 """#

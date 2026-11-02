@@ -166,6 +166,36 @@ if a.count > 1, a[1] == "selftest" {
   check("state after reset matches the model", eng.stateMatchesModel)
   check("state carries between frames", run1 != run2)
   check("reset restores the first-frame result", output(try eng.predict(bands, small: small)) == run1)
+  // Lazy loading
+  let lazy = Pipeline(compiledModel: compiledModel, scenesRoot: root)
+  let lazyKey = SceneKey(scene: "room", weather: .clear, phase: .noon)
+  lazy.scenes.select(lazyKey); lazy.scenes.transition(to: lazyKey); usleep(200_000)
+  check("nothing decodes before first use", lazy.scenes.frame() == nil && !lazy.modelReady)
+  // A frame of pure magenta stands in for the camera: it must never reach the output before the model does.
+  let cameraFrame = bgra { p, _ in for x in 0..<workingWidth { p[x * 4] = 255; p[x * 4 + 1] = 0; p[x * 4 + 2] = 255; p[x * 4 + 3] = 255 } }
+  let leak = NSLock(); nonisolated(unsafe) var leaked = false, shown = 0
+  lazy.onFrame = { pb, _ in
+    CVPixelBufferLockBaseAddress(pb, .readOnly); defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
+    let p = CVPixelBufferGetBaseAddress(pb)!.assumingMemoryBound(to: UInt8.self), row = CVPixelBufferGetBytesPerRow(pb)
+    var magenta = 0, n = 0
+    for y in stride(from: 0, to: workingHeight, by: 40) { for x in stride(from: 0, to: workingWidth, by: 40) {
+      let q = p + y * row + x * 4; n += 1
+      if q[0] > 240 && q[2] > 240 && q[1] < 20 { magenta += 1 }
+    } }
+    leak.lock(); if !lazy.modelReady && magenta > n / 50 { leaked = true }; shown += 1; leak.unlock()
+  }
+  let prepareStart = Date(); lazy.prepare(); lazy.prepare()
+  check("prepare returns at once", Date().timeIntervalSince(prepareStart) < 0.05)
+  let lazyDeadline = Date().addingTimeInterval(30)
+  while (lazy.stats.frames < 5) && Date() < lazyDeadline { lazy.ingest(cameraFrame, pts: .zero); usleep(33_000) }
+  check("background shows while the model loads (\(lazy.stats.backgroundFrames) frames)", lazy.stats.backgroundFrames > 0)
+  check("the camera frame never shows before the model is ready", !leaked)
+  check("matte frames follow once the model is ready", lazy.modelReady && lazy.stats.frames >= 5)
+  let broken = Pipeline(compiledModel: tmpCache.appendingPathComponent("missing.mlmodelc"), scenesRoot: root)
+  let failed = DispatchSemaphore(value: 0)
+  broken.onLoadFailure = { _ in failed.signal() }
+  broken.scenes.select(lazyKey); broken.prepare()
+  check("a model that can't load reports it", failed.wait(timeout: .now() + 10) == .success)
   try? FileManager.default.removeItem(at: tmpCache)
   // OBS setup
   let ext = "com.obsproject.obs-studio.mac-camera-extension (33.0.1/40954849292)\tOBS Virtual Camera\t"

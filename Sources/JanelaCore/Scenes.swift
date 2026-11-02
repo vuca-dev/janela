@@ -46,18 +46,26 @@ public enum DayClock {
   }
 }
 
-/// Owns at most two decoded backgrounds and crossfades between them.
+/// Owns at most two decoded backgrounds and crossfades between them. Decodes nothing until it
+/// has a GPU device, so an idle app holds no textures: the latest request is simply remembered.
 public final class SceneController {
-  private let device: MTLDevice; private let root: URL
+  private var device: MTLDevice?; private let root: URL
   private let loader = DispatchQueue(label: "janela.scene", qos: .utility)
   private let lock = NSLock()
   private var current: (SceneKey, MTLTexture)?
   private var previous: MTLTexture?
   private var fadeStart: Date = .distantPast
   private var pending: SceneKey?
+  private var wanted: SceneKey?
   public var transition: TimeInterval = 90
 
-  public init(device: MTLDevice, root: URL) { self.device = device; self.root = root }
+  public init(device: MTLDevice? = nil, root: URL) { self.device = device; self.root = root }
+
+  /// Supplies the GPU device and starts decoding the latest request, off the caller's thread.
+  public func attach(_ device: MTLDevice) {
+    lock.lock(); self.device = device; let key = wanted; lock.unlock()
+    if let key { select(key) }
+  }
 
   public func availableScenes() -> [String] {
     ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
@@ -71,15 +79,36 @@ public final class SceneController {
       kCGImageSourceThumbnailMaxPixelSize: maxPixels, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
   }
 
-  /// Blocks until the image is decoded and shows it immediately.
+  /// Blocks until the image is decoded and shows it immediately. Needs a device.
   public func show(_ key: SceneKey) throws {
-    let t = try Self.load(root.appendingPathComponent(key.file), device: device)
-    lock.lock(); current = (key, t); previous = nil; pending = nil; lock.unlock()
+    lock.lock(); let dev = device; lock.unlock()
+    guard let dev else { throw CocoaError(.featureUnsupported) }
+    let t = try Self.load(root.appendingPathComponent(key.file), device: dev)
+    lock.lock(); current = (key, t); previous = nil; pending = nil; wanted = key; lock.unlock()
+  }
+
+  /// Decodes off the caller's thread, then cuts to the image with no fade.
+  public func select(_ key: SceneKey) {
+    lock.lock(); defer { lock.unlock() }
+    wanted = key
+    guard let device else { return }
+    if current?.0 == key { pending = nil; return }
+    if pending == key { return }
+    pending = key
+    loader.async { [self] in
+      let t = try? Self.load(root.appendingPathComponent(key.file), device: device)
+      lock.lock(); defer { lock.unlock() }
+      guard pending == key else { return }
+      pending = nil
+      if let t { current = (key, t); previous = nil }
+    }
   }
 
   /// Decodes off the render path, then fades.
   public func transition(to key: SceneKey, now: Date = Date()) {
     lock.lock(); defer { lock.unlock() }
+    wanted = key
+    guard let device else { return }
     if current?.0 == key || pending == key { return }
     pending = key
     loader.async { [self] in
