@@ -1,12 +1,26 @@
-# Janela
+<p align="center">
+  <img src="assets/icon/Janela.png" alt="Janela app icon" width="112">
+</p>
 
-*Janela* is Portuguese for window.
+<h1 align="center">Janela</h1>
 
-A private virtual background camera for macOS. Janela puts you in a scene that follows
-your local time and weather, and shows up as a camera in Zoom, Meet, and anything else.
-All video stays on your Mac. The location box searches with Apple Maps as you type, and
-weather comes from Open-Meteo using coordinates rounded to about a kilometre. Sun times
-are calculated on your Mac.
+<p align="center">
+  A private virtual background for your Mac that follows your local time and weather.
+</p>
+
+<p align="center">
+  <a href="https://github.com/vuca-dev/janela/releases/latest">
+    <img src="https://img.shields.io/badge/Download_for_macOS-2F6FED?style=for-the-badge&logo=apple&logoColor=white" alt="Download for macOS">
+  </a>
+</p>
+
+<p align="center">
+  <img src="assets/readme/day-cycle.webp" alt="The Atelier scene moving from dawn to night" width="720">
+</p>
+
+Janela shows up as a camera in Zoom, Meet, and anything else. All video stays on your Mac.
+The location box searches with Apple Maps as you type, and weather comes from Open-Meteo
+using coordinates rounded to about a kilometre. Sun times are calculated on your Mac.
 
 ## How it works
 
