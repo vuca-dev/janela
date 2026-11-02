@@ -2,22 +2,29 @@ import AppKit
 import JanelaCore
 import SwiftUI
 
+enum CameraStage: Equatable {
+  case needOBS, downloading(Double), installing, turningOn, needApproval, ready(String), failed(String)
+}
+
 @MainActor final class SetupModel: ObservableObject {
   @Published var query = "" { didSet { if query != oldValue { lookUp() } } }
   @Published var suggestions: [LocationSuggestion] = []
   @Published var place: Place?
   @Published var scene: String
   @Published var problem: String?
-  @Published var cameraName: String?
+  @Published var stage: CameraStage
+  @Published var access: Bool?
   let scenes: [(name: String, image: CGImage?)]
   let firstRun: Bool
   var onScene: (String) -> Void = { _ in }
+  var onCameraStep: () -> Void = {}
+  var onAccess: () -> Void = {}
   var onDone: (Place?) -> Void = { _ in }
   private var task: Task<Void, Never>?
   private let search = LocationSearch()
 
-  init(place: Place?, scene: String, scenes: [(name: String, image: CGImage?)], firstRun: Bool, cameraName: String?) {
-    self.place = place; self.scene = scene; self.scenes = scenes; self.firstRun = firstRun; self.cameraName = cameraName
+  init(place: Place?, scene: String, scenes: [(name: String, image: CGImage?)], firstRun: Bool, stage: CameraStage, access: Bool?) {
+    self.place = place; self.scene = scene; self.scenes = scenes; self.firstRun = firstRun; self.stage = stage; self.access = access
     if let place { query = place.name }
   }
 
@@ -48,13 +55,62 @@ import SwiftUI
   }
 }
 
+struct SetupRow<Trailing: View>: View {
+  let done: Bool; let title: String; let detail: String
+  @ViewBuilder var trailing: Trailing
+  var body: some View {
+    HStack(alignment: .center, spacing: 10) {
+      Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? Color.green : Color.secondary).font(.title3)
+      VStack(alignment: .leading, spacing: 1) {
+        Text(title)
+        Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+      }
+      Spacer(minLength: 8)
+      trailing
+    }
+  }
+}
+
 struct SetupView: View {
   @ObservedObject var model: SetupModel
+
+  @ViewBuilder var cameraRow: some View {
+    switch model.stage {
+    case .needOBS:
+      SetupRow(done: false, title: "Virtual camera", detail: "Janela uses free, open-source OBS. About 210 MB.") { Button("Install OBS") { model.onCameraStep() } }
+    case let .downloading(p):
+      SetupRow(done: false, title: "Downloading OBS", detail: "\(Int(p * 100))%") { ProgressView(value: p).frame(width: 90) }
+    case .installing:
+      SetupRow(done: false, title: "Installing OBS", detail: "Checking and installing…") { ProgressView().controlSize(.small) }
+    case .turningOn:
+      SetupRow(done: false, title: "Turning on the virtual camera", detail: "This takes a few seconds.") { ProgressView().controlSize(.small) }
+    case .needApproval:
+      SetupRow(done: false, title: "Allow the virtual camera", detail: "Turn on OBS under Camera Extensions. Janela will notice.") { Button("Open Settings") { model.onCameraStep() } }
+    case let .ready(name):
+      SetupRow(done: true, title: "Virtual camera ready", detail: "In your meeting app, choose \(name).") { EmptyView() }
+    case let .failed(why):
+      SetupRow(done: false, title: "Virtual camera", detail: why) { Button("Try Again") { model.onCameraStep() } }
+    }
+  }
+
+  @ViewBuilder var accessRow: some View {
+    switch model.access {
+    case .some(true): SetupRow(done: true, title: "Camera access", detail: "Your video stays on this Mac.") { EmptyView() }
+    case .some(false): SetupRow(done: false, title: "Camera access is off", detail: "Turn on Janela in Camera settings.") { Button("Open Settings") { model.onAccess() } }
+    case nil: SetupRow(done: false, title: "Camera access", detail: "Your video stays on this Mac.") { Button("Allow") { model.onAccess() } }
+    }
+  }
+
   var body: some View {
     VStack(alignment: .leading, spacing: 22) {
       VStack(alignment: .leading, spacing: 4) {
         Text(model.firstRun ? "Welcome to Janela" : "Janela Settings").font(.title2.weight(.semibold))
         if model.firstRun { Text("Your window follows your local time and weather.").foregroundStyle(.secondary) }
+      }
+      VStack(alignment: .leading, spacing: 10) {
+        Text("Getting ready").font(.headline)
+        cameraRow
+        accessRow
       }
       VStack(alignment: .leading, spacing: 8) {
         Text("Location").font(.headline)
@@ -90,10 +146,6 @@ struct SetupView: View {
             }.buttonStyle(.plain)
           }
         }
-      }
-      HStack(spacing: 6) {
-        Image(systemName: model.cameraName == nil ? "exclamationmark.triangle.fill" : "video.fill").foregroundStyle(model.cameraName == nil ? Color.orange : Color.secondary)
-        Text(model.cameraName.map { "In your meeting app, choose \($0)." } ?? "Virtual camera not found. See the README to set up OBS.").font(.callout)
       }
       HStack {
         if model.firstRun && model.place == nil {

@@ -7,6 +7,25 @@ import Metal
 // Offline harness: runs a clip through the production engine.
 // janela-render <input> <model> <scenes-dir> <scene/weather/phase> <out.mp4> <alpha.raw> [cpuAndNE|all|cpuAndGPU]
 let a = CommandLine.arguments
+if a.count > 1, a[1] == "obs-hidden" {   // the app's real launch and close, on this Mac's profile
+  let app = try await OBSSetup.launchHidden()
+  print("launched:", app != nil, "state:", OBSSetup.extensionState())
+  try await Task.sleep(for: .seconds(6))
+  print("hidden:", app?.isHidden ?? false, "active:", app?.isActive ?? false)
+  let t = Date(); app?.terminate()
+  while app?.isTerminated == false, Date().timeIntervalSince(t) < 8 { try await Task.sleep(for: .milliseconds(200)) }
+  print(String(format: "closed in %.1fs:", Date().timeIntervalSince(t)), app?.isTerminated ?? false); exit(0)
+}
+if a.count > 2, a[1] == "obs-verify" { print("signature:", OBSSetup.verifySignature(at: URL(fileURLWithPath: a[2]))); exit(0) }
+if a.count > 2, a[1] == "obs-install" {   // real download and install into a test folder
+  let folder = URL(fileURLWithPath: a[2])
+  let t0 = Date()
+  do {
+    let u = try await OBSSetup.install(to: folder) { p in if Int(p * 1000) % 250 == 0 { print("progress", Int(p * 100)) } }
+    print("installed", u.path, String(format: "%.0fs", Date().timeIntervalSince(t0)), "signature:", OBSSetup.verifySignature(at: u))
+  } catch { print("failed:", error) }
+  exit(0)
+}
 if a.count > 1, a[1] == "selftest" {
   var bad = 0
   func check(_ n: String, _ ok: Bool) { print(ok ? "ok  " : "FAIL", n); if !ok { bad += 1 } }
@@ -90,6 +109,25 @@ if a.count > 1, a[1] == "selftest" {
     let f = try await WeatherService.forecast(Place(name: n, latitude: la, longitude: lo))
     check("forecast \(n): \(f.hours.count)h, \(f.weather(at: Date()).map(\.rawValue) ?? "nil")", f.hours.count >= 24 && f.weather(at: Date()) != nil)
   }
+  // OBS setup
+  let ext = "com.obsproject.obs-studio.mac-camera-extension (33.0.1/40954849292)\tOBS Virtual Camera\t"
+  check("extension active", OBSSetup.parseState("*\t*\t2MMRE5MTB8\t\(ext)[activated enabled]") == .active)
+  check("extension waiting", OBSSetup.parseState("\t\t2MMRE5MTB8\t\(ext)[activated waiting for user]") == .waitingForUser)
+  check("extension switched off", OBSSetup.parseState("\t\t2MMRE5MTB8\t\(ext)[activated disabled]") == .disabled)
+  check("extension absent", OBSSetup.parseState("0 extension(s)") == .absent)
+  check("extension being removed", OBSSetup.parseState("\t\t2MMRE5MTB8\t\(ext)[terminated waiting to uninstall on reboot]") == .absent)
+  check("this Mac's extension is active", OBSSetup.extensionState() == .active)
+  check("real OBS signature verifies", OBSSetup.verifySignature(at: URL(fileURLWithPath: "/Applications/OBS.app")))
+  check("other apps fail the OBS signature check", !OBSSetup.verifySignature(at: URL(fileURLWithPath: "/System/Applications/Calculator.app")))
+  let rel = try await OBSSetup.latestRelease()
+  check("latest release \(rel.url.lastPathComponent), \(rel.size / 1_000_000) MB", rel.url.lastPathComponent.hasSuffix("-macOS-Apple.dmg") && rel.sha256.count == 64)
+  let tmpHome = FileManager.default.temporaryDirectory.appendingPathComponent("janela-home-\(UUID().uuidString)")
+  try OBSSetup.prepareProfile(home: tmpHome)
+  let ini = tmpHome.appendingPathComponent("Library/Application Support/obs-studio/user.ini")
+  check("wizard skip written on a fresh profile", (try? String(contentsOf: ini, encoding: .utf8))?.contains("FirstRun=true") == true)
+  try "mine".write(to: ini, atomically: true, encoding: .utf8); try OBSSetup.prepareProfile(home: tmpHome)
+  check("existing OBS settings are left alone", (try? String(contentsOf: ini, encoding: .utf8)) == "mine")
+  try? FileManager.default.removeItem(at: tmpHome)
   exit(bad == 0 ? 0 : 1)
 }
 guard a.count >= 7 else { print("usage"); exit(2) }

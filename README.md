@@ -41,17 +41,16 @@ Needs Apple Silicon, macOS 14+, and the Command Line Tools. Xcode isn't required
     # first janela-render run compiles the model into ~/Library/Caches/Janela
     ./build_app.sh
 
-Scene images are not included yet. Put images at `scenes/<name>/<weather>-<phase>.jpg`, where
-weather is clear, cloudy, rain, snow or fog, and phase is dawn, morning, noon, afternoon,
-sunset or night.
+Scene images live in `scenes/<name>/<weather>-<phase>.jpg`, where weather is clear, cloudy,
+rain, snow or fog, and phase is dawn, morning, noon, afternoon, sunset or night.
 
 ## Virtual camera
 
 macOS only lets signed system extensions publish a camera. Rather than requiring a paid
-developer account, Janela publishes into OBS's open-source extension. Install OBS,
-click Start Virtual Camera once, approve the extension under System Settings > General >
-Login Items & Extensions > Camera Extensions, then quit OBS. Choose "OBS Virtual Camera"
-in your meeting app. OBS doesn't need to be running afterwards.
+developer account, Janela publishes into OBS's open-source extension. The setup window
+handles this: it downloads OBS if needed, verifies its checksum and Apple signature, starts
+it hidden, and takes you to the one switch macOS needs you to turn on. OBS doesn't need to
+be running afterwards.
 
 ## Tools
 
@@ -63,6 +62,7 @@ in your meeting app. OBS doesn't need to be running afterwards.
 
 ## License
 
-GPL-3.0, because Robust Video Matting is GPL-3.0. OBS is a separate project and its
+The code is GPL-3.0, because Robust Video Matting is GPL-3.0. The GPL does not cover the
+images in `scenes/`. OBS is a separate project and its
 extension is not distributed here.
 

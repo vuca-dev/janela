@@ -18,6 +18,15 @@ public final class CameraSource: NSObject, FrameSource, AVCaptureVideoDataOutput
   private let queue = DispatchQueue(label: "janela.capture", qos: .userInteractive)
   private var configured = false
 
+  /// nil until the user has been asked.
+  public static var access: Bool? {
+    switch AVCaptureDevice.authorizationStatus(for: .video) {
+    case .authorized: return true
+    case .notDetermined: return nil
+    default: return false
+    }
+  }
+
   public static func request(_ done: @escaping @Sendable (Bool) -> Void) { AVCaptureDevice.requestAccess(for: .video, completionHandler: done) }
 
   /// Physical cameras only: a virtual camera must never be able to feed itself.

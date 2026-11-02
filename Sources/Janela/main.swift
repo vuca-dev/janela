@@ -39,6 +39,11 @@ struct Config: Codable {
   var forecast: Forecast?
   var lastAttempt = Date.distantPast
   var setup: SetupWindow?
+  var setupModel: SetupModel?
+  var setupWatch: Timer?
+  var closeObserver: Any?
+  var launchedOBS: NSRunningApplication?
+  var turnOnStarted = Date.distantPast
   static let forecastURL = Config.url.deletingLastPathComponent().appendingPathComponent("forecast.json")
   var message: String?
   let filePath = UserDefaults.standard.string(forKey: "file")      // -file <path> replays a clip
@@ -92,8 +97,6 @@ struct Config: Codable {
     armed = on; config.enabled = on; config.save()
     if on {
       watchTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.watch() }
-      if filePath == nil { CameraSource.request { ok in DispatchQueue.main.async { [weak self] in
-        if !ok { self?.message = "Camera access is off. Enable it in System Settings." } } } }
       if alwaysOn { activate() }
     } else {
       watchTimer?.invalidate(); watchTimer = nil; deactivate()
@@ -106,7 +109,7 @@ struct Config: Codable {
 
   func watch() {
     guard let name = outputDevice() else {
-      if !running { message = "Virtual camera not installed. See README." }
+      if !running { message = "Virtual camera isn't set up yet." }
       return
     }
     // A preferred camera can appear while running. Move to it rather than keep feeding the old one.
@@ -171,8 +174,13 @@ struct Config: Codable {
     if let setup, setup.window.isVisible { setup.window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
     let k = key()
     let scenes = pipeline.scenes.availableScenes().map { (name: $0, image: pipeline.scenes.thumbnail(scene: $0, weather: k.weather, phase: k.phase)) }
-    let m = SetupModel(place: config.place, scene: k.scene, scenes: scenes, firstRun: firstRun, cameraName: outputDevice())
-    let w = SetupWindow(model: m); setup = w
+    let m = SetupModel(place: config.place, scene: k.scene, scenes: scenes, firstRun: firstRun, stage: currentStage(), access: filePath == nil ? CameraSource.access : true)
+    let w = SetupWindow(model: m); setup = w; setupModel = m
+    m.onCameraStep = { [weak self] in self?.cameraStep() }
+    m.onAccess = { [weak self] in self?.askForCameraAccess() }
+    closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w.window, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.stopWatchingSetup() } }
+    if case .ready = m.stage {} else { startWatchingSetup() }
     m.onScene = { [weak self] s in self?.setScene(s) }
     m.onDone = { [weak self, weak w] p in
       guard let self else { return }
@@ -185,12 +193,85 @@ struct Config: Codable {
     if let d = UserDefaults.standard.string(forKey: "setupDemo") { runDemo(d, m, w) }
   }
 
+  func currentStage() -> CameraStage {
+    if let n = outputDevice() { return .ready(n) }
+    switch OBSSetup.extensionState() {
+    case .active: return .ready(sink.preferredNames.first ?? "OBS Virtual Camera")
+    case .waitingForUser, .disabled: return .needApproval
+    case .absent: return OBSSetup.installedURL() == nil ? .needOBS : .turningOn
+    }
+  }
+
+  /// The one button in the camera row: whatever comes next.
+  func cameraStep() {
+    guard let m = setupModel else { return }
+    switch m.stage {
+    case .needApproval: NSWorkspace.shared.open(OBSSetup.extensionSettings)
+    case .needOBS, .failed:
+      if OBSSetup.installedURL() != nil { turnOn(m); return }
+      m.stage = .downloading(0)
+      Task { @MainActor in
+        do {
+          _ = try await OBSSetup.install { p in Task { @MainActor [weak m] in
+            if let m, case .downloading = m.stage { m.stage = p >= 1 ? .installing : .downloading(p) } } }
+          turnOn(m)
+        } catch { m.stage = .failed("\(error)") }
+      }
+    default: break
+    }
+  }
+
+  func turnOn(_ m: SetupModel) {
+    m.stage = .turningOn
+    Task { @MainActor in
+      do { launchedOBS = try await OBSSetup.launchHidden(); turnOnStarted = Date(); startWatchingSetup() }
+      catch { m.stage = .failed("Couldn't start OBS.") }
+    }
+  }
+
+  func startWatchingSetup() {
+    if setupWatch != nil { return }
+    if setupModel?.stage == .turningOn { turnOnStarted = Date(); Task { @MainActor in launchedOBS = try? await OBSSetup.launchHidden() } }
+    setupWatch = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.watchSetup() } }
+  }
+
+  func watchSetup() {
+    guard let m = setupModel else { return }
+    if filePath == nil, m.access != CameraSource.access { m.access = CameraSource.access }
+    switch m.stage {
+    case .turningOn, .needApproval:
+      switch OBSSetup.extensionState() {
+      case .active:
+        m.stage = .ready(outputDevice() ?? sink.preferredNames.first ?? "OBS Virtual Camera"); closeOBS(); stopWatchingSetup()
+      case .waitingForUser, .disabled:
+        if m.stage != .needApproval { m.stage = .needApproval; NSWorkspace.shared.open(OBSSetup.extensionSettings) }
+      case .absent:
+        if m.stage == .turningOn, Date().timeIntervalSince(turnOnStarted) > 20 { closeOBS(); m.stage = .failed("OBS didn't respond. Try again.") }
+      }
+    default: break
+    }
+  }
+
+  /// Janela only ever closes an OBS it opened itself.
+  func closeOBS() { launchedOBS?.terminate(); launchedOBS = nil }
+  func stopWatchingSetup() { setupWatch?.invalidate(); setupWatch = nil }
+
+  func askForCameraAccess() {
+    if CameraSource.access == false { NSWorkspace.shared.open(OBSSetup.cameraPrivacySettings); startWatchingSetup(); return }
+    CameraSource.request { ok in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in self?.setupModel?.access = ok } } }
+  }
+
   func setScene(_ s: String) { config.scene = s; config.save(); updateScene(immediate: true) }
 
   /// -setupDemo <query> -setupShots <prefix>: drives the real window for tests, without saving.
   func runDemo(_ q: String, _ m: SetupModel, _ w: SetupWindow) {
     let shots = UserDefaults.standard.string(forKey: "setupShots") ?? "/tmp/janela"
     Task { @MainActor in
+      if let st = UserDefaults.standard.string(forKey: "setupStages"), st == "1" {
+        let all: [(String, CameraStage, Bool?)] = [("a", .needOBS, nil), ("b", .downloading(0.42), nil), ("c", .turningOn, nil), ("d", .needApproval, nil), ("e", .failed("The download didn't match its checksum, so it wasn't installed."), false), ("f", .ready("OBS Virtual Camera"), true)]
+        for (n, s, a) in all { m.stage = s; m.access = a; try? await Task.sleep(for: .milliseconds(500)); w.snapshot(to: shots + "-stage-\(n).png") }
+        exit(0)
+      }
       try? await Task.sleep(for: .seconds(1)); w.snapshot(to: shots + "-1-empty.png")
       m.query = q
       try? await Task.sleep(for: .seconds(2)); w.snapshot(to: shots + "-2-suggest.png")

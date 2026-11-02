@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1024" height="1024" viewBox="25 18 495 495" role="img" aria-label="Janela macOS icon — abstract glowing window">
+  <title>Janela</title>
+  <desc>Editable vector reconstruction of the original window and sunlight icon, composed from paths and gradients.</desc>
+  <defs>
+    <!-- Broad daylight transitions run through all surrounding surfaces. -->
+    <linearGradient id="ambientBase" x1="0" y1="22" x2="0" y2="509" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2d509c"/>
+      <stop offset=".37" stop-color="#5b76bc"/>
+      <stop offset=".66" stop-color="#8e8fb7"/>
+      <stop offset="1" stop-color="#a994ae"/>
+    </linearGradient>
+    <radialGradient id="ambientDeepBlue" gradientUnits="userSpaceOnUse" cx="385" cy="110" r="390" gradientTransform="matrix(1 0 0 .85 0 16)">
+      <stop offset="0" stop-color="#3158a5" stop-opacity=".95"/>
+      <stop offset=".63" stop-color="#3a62b1" stop-opacity=".15"/>
+      <stop offset="1" stop-color="#3e67bb" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ambientLavender" gradientUnits="userSpaceOnUse" cx="465" cy="380" r="280" gradientTransform="matrix(1 0 0 .9 0 38)">
+      <stop offset="0" stop-color="#7b87c1" stop-opacity=".82"/>
+      <stop offset=".68" stop-color="#948db9" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#948db9" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="ambientWarm" gradientUnits="userSpaceOnUse" cx="104" cy="468" r="280" gradientTransform="matrix(1 0 0 .8 0 92)">
+      <stop offset="0" stop-color="#e4a6a7" stop-opacity=".85"/>
+      <stop offset=".57" stop-color="#d8a0ab" stop-opacity=".36"/>
+      <stop offset="1" stop-color="#c8a0ae" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Diagonal plane is continuous and receives softer warmth reflected from the window. -->
+    <linearGradient id="planeBase" x1="62" y1="449" x2="512" y2="432" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e6b2aa"/>
+      <stop offset=".26" stop-color="#cba8b0"/>
+      <stop offset=".65" stop-color="#9791b7"/>
+      <stop offset="1" stop-color="#7b86bd"/>
+    </linearGradient>
+    <linearGradient id="planeBottom" x1="200" y1="400" x2="220" y2="510" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffccb2" stop-opacity=".3"/>
+      <stop offset=".55" stop-color="#a58ead" stop-opacity="0"/>
+      <stop offset="1" stop-color="#6469a2" stop-opacity=".26"/>
+    </linearGradient>
+    <radialGradient id="planeLight" gradientUnits="userSpaceOnUse" cx="144" cy="419" r="270" gradientTransform="matrix(1 0 0 .69 0 130)">
+      <stop offset="0" stop-color="#ffcf9f" stop-opacity=".83"/>
+      <stop offset=".18" stop-color="#f6bca4" stop-opacity=".52"/>
+      <stop offset=".68" stop-color="#dda7b0" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#dda7b0" stop-opacity="0"/>
+    </radialGradient>
+    <!-- The window gets a richer, intrinsically illuminated version of the same sky. -->
+    <linearGradient id="sky" x1="259" y1="110" x2="275" y2="429" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#72a7ed"/>
+      <stop offset=".23" stop-color="#94b3f1"/>
+      <stop offset=".46" stop-color="#b0b9e9"/>
+      <stop offset=".69" stop-color="#d9b6cf"/>
+      <stop offset=".85" stop-color="#f0b8b9"/>
+      <stop offset="1" stop-color="#ffe1a4"/>
+    </linearGradient>
+    <radialGradient id="skyBlue" gradientUnits="userSpaceOnUse" cx="323" cy="135" r="320" gradientTransform="matrix(1 0 0 .76 0 32)">
+      <stop offset="0" stop-color="#6d9de9" stop-opacity=".66"/>
+      <stop offset=".68" stop-color="#86abea" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#86abea" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="skyGlow" gradientUnits="userSpaceOnUse" cx="159" cy="425" r="230" gradientTransform="matrix(1 0 0 .78 0 93)">
+      <stop offset="0" stop-color="#fff1b6" stop-opacity=".82"/>
+      <stop offset=".2" stop-color="#ffdaa8" stop-opacity=".54"/>
+      <stop offset=".76" stop-color="#fac4b6" stop-opacity=".09"/>
+      <stop offset="1" stop-color="#fac4b6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="windowRim" x1="180" y1="145" x2="395" y2="384" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cfddfc" stop-opacity=".47"/>
+      <stop offset=".45" stop-color="#d0ddf7" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#fff4da" stop-opacity=".45"/>
+    </linearGradient>
+    <path id="shell" d="M184 23 C94 23 31 80 31 173 L31 358 C31 453 90 509 181 509 L362 509 C458 509 513 455 513 360 L513 174 C513 82 456 23 364 23 Z"/>
+    <path id="opening" d="M141 210 C141 185 154 170 180 162 L367 109 C387 103 403 118 403 140 L403 342 C403 363 393 373 369 380 L179 420 C153 426 141 413 141 390 Z"/>
+    <clipPath id="shellClip"><use xlink:href="#shell"/></clipPath>
+    <clipPath id="openingClip"><use xlink:href="#opening"/></clipPath>
+  </defs>
+  <g id="Background" clip-path="url(#shellClip)">
+    <use xlink:href="#shell" fill="url(#ambientBase)"/>
+    <use xlink:href="#shell" fill="url(#ambientDeepBlue)"/>
+    <use xlink:href="#shell" fill="url(#ambientLavender)"/>
+    <use xlink:href="#shell" fill="url(#ambientWarm)"/>
+  </g>
+  <g id="Reflected-light-plane" clip-path="url(#shellClip)">
+    <path d="M48 452 L517 334 L517 520 L48 520 Z" fill="url(#planeBase)"/>
+    <path d="M48 452 L517 334 L517 520 L48 520 Z" fill="url(#planeBottom)"/>
+    <path d="M48 452 L517 334 L517 520 L48 520 Z" fill="url(#planeLight)"/>
+    <path d="M48 452 L517 334" fill="none" stroke="#cbd0e8" stroke-opacity=".18" stroke-width="1"/>
+  </g>
+  <g id="Window">
+    <use xlink:href="#opening" fill="url(#sky)"/>
+    <g clip-path="url(#openingClip)">
+      <use xlink:href="#opening" fill="url(#skyBlue)"/>
+      <use xlink:href="#opening" fill="url(#skyGlow)"/>
+    </g>
+    <use xlink:href="#opening" fill="none" stroke="url(#windowRim)" stroke-width="1.2"/>
+  </g>
+  <use xlink:href="#shell" fill="none" stroke="#8faafa" stroke-opacity=".20" stroke-width="1.5"/>
+</svg>

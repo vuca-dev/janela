@@ -6,7 +6,6 @@ third_party
 build.noindex
 *.mlmodelc
 .DS_Store
-scenes/
 models/*.mlpackage
 models/*.tflite
 research/private/
