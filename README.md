@@ -18,67 +18,60 @@
   <img src="assets/readme/day-cycle.webp" alt="The Atelier scene moving from dawn to night" width="720">
 </p>
 
-Janela shows up as a camera in Zoom, Meet, and anything else. All video stays on your Mac.
-The location box searches with Apple Maps as you type, and weather comes from Open-Meteo
-using coordinates rounded to about a kilometre. Sun times are calculated on your Mac.
+Janela shows up as a camera in Zoom, Meet, and anything else, and puts you in a scene whose
+light and weather match your own.
 
-## How it works
+## Privacy
 
-Camera (1080p BGRA) → Robust Video Matting on the Neural Engine (720p) → motion-gated
-temporal stabilizer → linear-light composite in Metal → CoreMediaIO camera sink.
-
-- Each matte is composited onto the exact frame it came from, so edges don't lag motion.
-- The stabilizer smooths the matte heavily where nothing moved, and opens fully where
-  something did. This removes edge shimmer without ghosting.
-- Below full alpha, colour comes from RVM's foreground estimate, so the old room doesn't
-  halo around you.
-- Nothing runs while no app reads the camera. The camera light stays off.
+All video stays on your Mac. The location box searches with Apple Maps as you type, and
+weather comes from Open-Meteo using coordinates rounded to about a kilometre. Nothing runs
+while no app reads the camera, and the camera light stays off.
 
 ## Setup
 
-The first launch asks for your city or postal code, in any language, and lets you pick a
-background. Reopen Janela, or use the menu bar sun icon, to change either one. If you skip
-the location, time of day comes from your time zone and the weather stays clear.
+Needs Apple Silicon and macOS 14 or later. Download Janela, open it, and follow the setup
+window: enter your city or postal code, pick a background, and allow the camera.
 
-Weather refreshes every 3 hours and after your Mac wakes. A 24-hour forecast is cached, so
-scenes keep changing between refreshes and while offline.
+macOS only lets signed system extensions publish a camera, so Janela publishes through OBS's
+open-source extension. Setup downloads OBS if needed, verifies its checksum and Apple
+signature, and takes you to the one switch macOS needs you to turn on. OBS doesn't need to be
+running afterwards.
+
+## Resource use
+
+Measured on an Apple M1 Pro with 16 GB and macOS 27.0.1, at commit `5e3a312`, on 2026-11-01.
+
+| | |
+| --- | --- |
+| App size | 39 MB |
+| Idle, before first use | 0.1% of one CPU core, 12 MB |
+| Live | 13% of one CPU core, 90 MB average, 102 MB peak |
+| Frame rate | 29.9 fps |
+| Frame time | 20 ms median, 25 ms p95 |
+
+These cover Janela's process over 5 minutes each, with a reader on the virtual camera. Live
+figures come from file replay of a drawn 1080p clip at 30 fps, not a real camera. They include
+H.264 decode, which took 3.5% of a core on its own, and exclude camera capture. Neural Engine
+and GPU load, energy, and other processes weren't measured. After a call, memory stays at about
+84 MB until Janela quits.
+
+To reproduce, with OBS's extension on and Janela quit:
+
+    scripts/benchmark.sh
 
 ## Build
 
-Needs Apple Silicon, macOS 14+, and the Command Line Tools. Xcode isn't required.
+Needs Apple Silicon, macOS 14 or later, and the Command Line Tools. Xcode isn't required.
 
-    python3 -m venv research/.venv
-    research/.venv/bin/pip install -r research/requirements.txt
-    git clone https://github.com/PeterL1n/RobustVideoMatting third_party/RVM
-    git -C third_party/RVM checkout 53d74c6826735f01f4406b5ca9075eee27bec094
-    # download rvm_mobilenetv3.pth from that repo's v1.0.0 release into models/, then check it:
-    echo "3c7c1d92033f7c38d6577c481d13a195d7d80a159b960f4f3119ac7b534cf4f8  models/rvm_mobilenetv3.pth" | shasum -a 256 -c
-    research/.venv/bin/python research/export.py 1280 720 0.375 rvm_mp_720
-    # first janela-render run compiles the model into ~/Library/Caches/Janela
+    git clone https://github.com/vuca-dev/janela
+    cd janela
     ./build_app.sh
 
-Scene images live in `scenes/<name>/<weather>-<phase>.jpg`, where weather is clear, cloudy,
-rain, snow or fog, and phase is dawn, morning, noon, afternoon, sunset or night.
-
-## Virtual camera
-
-macOS only lets signed system extensions publish a camera. Rather than requiring a paid
-developer account, Janela publishes into OBS's open-source extension. The setup window
-handles this: it downloads OBS if needed, verifies its checksum and Apple signature, starts
-it hidden, and takes you to the one switch macOS needs you to turn on. OBS doesn't need to
-be running afterwards.
-
-## Tools
-
-- `janela-render selftest scenes`: time, weather and scene checks.
-- `janela-render <clip> <model> scenes <scene/weather/phase> <out.mp4> <alpha.raw>`:
-  runs a clip through the production engine with stage timings.
-- `camera-probe list`: lists camera devices and streams.
-- `research/export.py`: exports RVM to Core ML.
+The app lands in `build.noindex/Janela.app`. `research/export.py` regenerates the model in
+`Resources/` from Robust Video Matting's weights.
 
 ## License
 
-The code is GPL-3.0, because Robust Video Matting is GPL-3.0. The GPL does not cover the
-images in `scenes/`. OBS is a separate project and its
-extension is not distributed here.
-
+The code and the model are GPL-3.0, because Robust Video Matting is GPL-3.0. The GPL does not
+cover the images in `scenes/`. OBS is a separate project and its extension is not distributed
+here.
