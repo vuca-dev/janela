@@ -44,6 +44,7 @@ struct Config: Codable {
   var closeObserver: Any?
   var launchedOBS: NSRunningApplication?
   var turnOnStarted = Date.distantPast
+  var warmer: Process?
   static let forecastURL = Config.url.deletingLastPathComponent().appendingPathComponent("forecast.json")
   var message: String?
   #if JANELA_TEST
@@ -64,8 +65,7 @@ struct Config: Codable {
     status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     status.button?.image = NSImage(systemSymbolName: "sun.horizon.fill", accessibilityDescription: "Janela")
     let menu = NSMenu(); menu.delegate = self; status.menu = menu
-    let res = Bundle.main.resourceURL!
-    pipeline = Pipeline(compiledModel: res.appendingPathComponent("rvm.mlmodelc"), scenesRoot: res.appendingPathComponent("scenes"))
+    pipeline = Pipeline(compiledModel: Bundle.main.matteModel, scenesRoot: Bundle.main.resourceURL!.appendingPathComponent("scenes"))
     pipeline.onLoadFailure = { error in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
       self?.message = "Could not load the model: \(error)" } } }
     pipeline.onFrame = { [weak self] pb, pts in
@@ -79,9 +79,15 @@ struct Config: Codable {
     updateScene(immediate: true)
     Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
     NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-      MainActor.assumeIsolated { self?.tick() } }
+      MainActor.assumeIsolated { self?.tick(); self?.warmCaches() } }
     tick()
     if let statsPath { startStats(statsPath) }
+    #if JANELA_TEST
+    let wakeEvery = UserDefaults.standard.double(forKey: "wakeEvery")   // -wakeEvery <s> posts the real wake notification
+    if wakeEvery > 0 { Timer.scheduledTimer(withTimeInterval: wakeEvery, repeats: true) { _ in NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil) } }
+    let activateAfter = UserDefaults.standard.double(forKey: "activateAfter")   // -activateAfter <s> starts as a reader would
+    if activateAfter > 0 { Timer.scheduledTimer(withTimeInterval: activateAfter, repeats: false) { [weak self] _ in MainActor.assumeIsolated { self?.activate() } } }
+    #endif
     if config.enabled { setRunning(true) }
     if config.setupDone != true || demoQuery != nil { showSetup(firstRun: true) }
   }
@@ -113,9 +119,23 @@ struct Config: Codable {
     if on {
       watchTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.watch() }
       if alwaysOn { activate() }
+      warmCaches()
     } else {
       watchTimer?.invalidate(); watchTimer = nil; deactivate()
     }
+  }
+
+  /// macOS keeps the prepared model and shaders on disk, per app and model path. So a short-lived
+  /// copy of this binary can prepare them for the first call, and its memory leaves with it.
+  func warmCaches() {
+    if warmer != nil || !armed || running || !pipeline.needsLoad { return }
+    let p = Process()
+    p.executableURL = Bundle.main.executableURL; p.arguments = [warmFlag]
+    p.qualityOfService = .background
+    p.standardInput = FileHandle.nullDevice; p.standardOutput = FileHandle.nullDevice; p.standardError = FileHandle.nullDevice
+    p.terminationHandler = { _ in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in self?.warmer = nil } } }
+    warmer = p
+    do { try p.run() } catch { warmer = nil }
   }
 
   func outputDevice() -> String? {
@@ -157,6 +177,7 @@ struct Config: Codable {
       } else { showAccessHelp() }
       return
     }
+    warmer?.terminate()   // a call goes first, and the real load does the same work
     pipeline.prepare()
     pipeline.reset()
     if source == nil { source = filePath.map { FileSource(url: URL(fileURLWithPath: $0)) } ?? CameraSource() }
@@ -353,12 +374,27 @@ struct Config: Codable {
   }
 }
 
+extension Bundle { var matteModel: URL { resourceURL!.appendingPathComponent("rvm.mlmodelc") } }
 extension JSONEncoder { static var iso: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e } }
 extension JSONDecoder { static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
 
 #if JANELA_TEST
 runMeasurement(CommandLine.arguments)
 #endif
+
+// The warm-up copy never reaches the lock or AppKit below, and uses neither the camera nor the sink.
+let warmFlag = "--warm-caches"
+if CommandLine.arguments.dropFirst().first == warmFlag {
+  setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG)
+  #if JANELA_TEST
+  alarm(UInt32(ProcessInfo.processInfo.environment["JANELA_WARM_TIMEOUT"] ?? "") ?? 120)
+  #else
+  alarm(120)   // the default action ends the process, even if the app has gone
+  #endif
+  _ = try? Compositor()
+  _ = try? MatteEngine(compiledModel: Bundle.main.matteModel)
+  exit(0)
+}
 
 // Two copies would both capture the camera and write into one sink, which corrupts the picture.
 // An exclusive lock covers every launch path, and the OS releases it even after a crash.
