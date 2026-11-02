@@ -1,0 +1,13 @@
+research/.venv
+research/out
+models/*.pth
+third_party
+.build
+build.noindex
+*.mlmodelc
+.DS_Store
+scenes/
+models/*.mlpackage
+models/*.tflite
+research/private/
+models/
