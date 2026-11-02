@@ -245,6 +245,12 @@ struct Config: Codable {
       if changed { forecast = nil; try? FileManager.default.removeItem(at: Self.forecastURL); updateScene(immediate: true); refreshWeather(force: true) }
       w?.window.close()
     }
+    if let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String {
+      Task { @MainActor [weak m] in
+        let found = await Updates.available(current: v)
+        m?.update = found
+      }
+    }
     NSApp.setActivationPolicy(.regular)   // findable in the Dock while it's open
     w.show()
     #if JANELA_TEST

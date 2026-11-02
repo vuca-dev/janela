@@ -118,7 +118,11 @@ if a.count > 1, a[1] == "selftest" {
       guard let f = r.first else { check("search \(q) -> none", false); continue }
       let p = try await ls.resolve(f)
       check("search \(q) -> \(p.name) (\(p.latitude), \(p.longitude))", abs(p.latitude - la) < 1 && abs(p.longitude - lo) < 1)
-    } catch { check("search \(q) error \(error.localizedDescription)", false) }
+    } catch {
+      let e = error as NSError
+      if e.domain == "MKErrorDomain", e.code == 3 { print("skip search \(q): Apple Maps throttled it") }   // a limit on Apple's side, not a bug here
+      else { check("search \(q) error \(error.localizedDescription)", false) }
+    }
   }
   let one = try await ls.search("C"); check("one letter returns nothing", one.isEmpty)
   let nope = try await ls.search("zzzzqqqqxxxx"); check("nonsense returns nothing", nope.isEmpty)
@@ -236,6 +240,19 @@ if a.count > 1, a[1] == "selftest" {
   try "mine".write(to: ini, atomically: true, encoding: .utf8); try OBSSetup.prepareProfile(home: tmpHome)
   check("existing OBS settings are left alone", (try? String(contentsOf: ini, encoding: .utf8)) == "mine")
   try? FileManager.default.removeItem(at: tmpHome)
+  check("a newer patch is an update", Updates.isNewer("v0.1.3", than: "0.1.2"))
+  check("0.1.10 is newer than 0.1.9", Updates.isNewer("v0.1.10", than: "0.1.9"))
+  check("0.2 is newer than 0.1.9", Updates.isNewer("0.2", than: "0.1.9"))
+  check("the same version is not an update", !Updates.isNewer("v0.1.2", than: "0.1.2"))
+  check("0.1 equals 0.1.0", !Updates.isNewer("0.1", than: "0.1.0"))
+  check("an older release is not an update", !Updates.isNewer("v0.1.1", than: "0.1.2"))
+  check("a pre-release tag is not an update", !Updates.isNewer("v0.2-beta", than: "0.1.2"))
+  check("an empty tag is not an update", !Updates.isNewer("", than: "0.1.2"))
+  check("release tag parses", Updates.parseTag(Data(#"{"tag_name":"v0.1.3"}"#.utf8)) == "v0.1.3")
+  check("a bad reply parses to nothing", Updates.parseTag(Data("{}".utf8)) == nil)
+  let liveOld = await Updates.available(current: "0.0.1"), liveNew = await Updates.available(current: "99.0")
+  check("GitHub reports a newer release, \(liveOld ?? "none")", liveOld != nil)
+  check("no update past the latest release", liveNew == nil)
   exit(bad == 0 ? 0 : 1)
 }
 guard a.count >= 7 else { print("usage"); exit(2) }

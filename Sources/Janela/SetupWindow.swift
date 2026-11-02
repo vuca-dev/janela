@@ -15,6 +15,7 @@ enum CameraStage: Equatable {
   @Published var stage: CameraStage
   @Published var access: Bool?
   @Published var openAtLogin = true
+  @Published var update: String?
   let scenes: [(name: String, image: CGImage?)]
   let firstRun: Bool
   var onScene: (String) -> Void = { _ in }
@@ -109,6 +110,13 @@ struct SetupView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text(model.firstRun ? "Welcome to Janela" : "Janela Settings").font(.title2.weight(.semibold))
         if model.firstRun { Text("Your window follows your local time and weather.").foregroundStyle(.secondary) }
+      }
+      if let update = model.update {
+        HStack {
+          Text("Update available: Janela \(update)")
+          Spacer()
+          Button("Download") { NSWorkspace.shared.open(Updates.page) }
+        }
       }
       VStack(alignment: .leading, spacing: 10) {
         Text("Getting ready").font(.headline)

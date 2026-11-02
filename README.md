@@ -24,8 +24,9 @@ light and weather match your own.
 ## Privacy
 
 All video stays on your Mac. The location box searches with Apple Maps as you type, and
-weather comes from Open-Meteo using coordinates rounded to about a kilometre. The camera only
-runs while an app reads it, so otherwise its light stays off.
+weather comes from Open-Meteo using coordinates rounded to about a kilometre. Opening Janela's
+settings asks GitHub for the latest version number. The camera only runs while an app reads it,
+so otherwise its light stays off.
 
 ## Setup
 
