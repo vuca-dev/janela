@@ -14,6 +14,7 @@ enum CameraStage: Equatable {
   @Published var problem: String?
   @Published var stage: CameraStage
   @Published var access: Bool?
+  @Published var openAtLogin = true
   let scenes: [(name: String, image: CGImage?)]
   let firstRun: Bool
   var onScene: (String) -> Void = { _ in }
@@ -148,6 +149,7 @@ struct SetupView: View {
           }
         }
       }
+      Toggle("Open Janela at login", isOn: $model.openAtLogin).toggleStyle(.checkbox)
       HStack {
         if model.firstRun && model.place == nil {
           Text("Without a location, time of day uses your time zone and weather stays clear.").font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

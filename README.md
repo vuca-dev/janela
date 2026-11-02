@@ -36,7 +36,9 @@ Needs Apple Silicon and macOS 14 or later. Tested on macOS 27 so far.
 2. Open Janela. It isn't notarized by Apple yet, so macOS will block it the first time. Open
    System Settings > Privacy & Security, scroll to Security, click **Open Anyway**, and confirm.
 3. Follow the setup window: enter your city or postal code, pick a background, and allow the
-   camera.
+   camera. If your meeting app was already open, restart it.
+
+Janela lives in the menu bar and opens at login. You can turn that off in setup or from its menu.
 
 macOS only lets signed system extensions publish a camera, so Janela publishes through OBS's
 open-source extension. Setup downloads OBS if needed, verifies its checksum and Apple

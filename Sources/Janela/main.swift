@@ -63,7 +63,8 @@ struct Config: Codable {
 
   func applicationDidFinishLaunching(_ n: Notification) {
     status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    status.button?.image = NSImage(systemSymbolName: "sun.horizon.fill", accessibilityDescription: "Janela")
+    status.button?.image = menuBarIcon()
+    NSApp.mainMenu = appMainMenu()
     let menu = NSMenu(); menu.delegate = self; status.menu = menu
     pipeline = Pipeline(compiledModel: Bundle.main.matteModel, scenesRoot: Bundle.main.resourceURL!.appendingPathComponent("scenes"))
     pipeline.onLoadFailure = { error in DispatchQueue.main.async { MainActor.assumeIsolated { [weak self] in
@@ -234,16 +235,19 @@ struct Config: Codable {
     m.onCameraStep = { [weak self] in self?.cameraStep() }
     m.onAccess = { [weak self] in self?.askForCameraAccess() }
     closeObserver = NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: w.window, queue: .main) { [weak self] _ in
-      MainActor.assumeIsolated { self?.stopWatchingSetup() } }
+      MainActor.assumeIsolated { self?.stopWatchingSetup(); NSApp.setActivationPolicy(.accessory) } }
     if case .ready = m.stage {} else { startWatchingSetup() }
     m.onScene = { [weak self] s in self?.setScene(s) }
-    m.onDone = { [weak self, weak w] p in
+    m.openAtLogin = firstRun || LoginItem.isOn
+    m.onDone = { [weak self, weak w, weak m] p in
       guard let self else { return }
+      if let m { LoginItem.set(m.openAtLogin) }
       let changed = p != config.place
       config.place = p; config.setupDone = true; config.save()
       if changed { forecast = nil; try? FileManager.default.removeItem(at: Self.forecastURL); updateScene(immediate: true); refreshWeather(force: true) }
       w?.window.close()
     }
+    NSApp.setActivationPolicy(.regular)   // findable in the Dock while it's open
     w.show()
     #if JANELA_TEST
     if let d = demoQuery { runDemo(d, m, w) }
@@ -359,11 +363,13 @@ struct Config: Codable {
     m.addItem(sub("Weather", [item("Live", config.manualWeather == nil, #selector(pickWeather), nil)] + Weather.allCases.map { item($0.rawValue.capitalized, config.manualWeather == $0.rawValue, #selector(pickWeather), $0.rawValue) }))
     m.addItem(sub("Time of Day", [item("Follow the Sun", config.manualPhase == nil, #selector(pickPhase), nil)] + Phase.allCases.map { item($0.rawValue.capitalized, config.manualPhase == $0.rawValue, #selector(pickPhase), $0.rawValue) }))
     m.addItem(item("Location and Background…", false, #selector(openSettings)))
+    m.addItem(item("Open at Login", LoginItem.isOn, #selector(toggleLogin)))
     m.addItem(.separator())
     m.addItem(item("Quit Janela", false, #selector(quit)))
   }
 
   @objc func toggle() { setRunning(!armed) }
+  @objc func toggleLogin() { LoginItem.set(!LoginItem.isOn) }
   @objc func quit() { NSApp.terminate(nil) }
   @objc func pickScene(_ i: NSMenuItem) { setScene(i.representedObject as! String) }
   @objc func openSettings() { showSetup(firstRun: false) }
@@ -383,6 +389,20 @@ extension JSONEncoder { static var iso: JSONEncoder { let e = JSONEncoder(); e.d
 extension JSONDecoder { static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
 
 #if JANELA_TEST
+if CommandLine.arguments.count > 2, CommandLine.arguments[1] == "--chrome-test" {   // draws the icon and round-trips the login item
+  MainActor.assumeIsolated {
+    let image = menuBarIcon(); image.isTemplate = false
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 288, pixelsHigh: 288, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+    NSColor.white.setFill(); NSRect(x: 0, y: 0, width: 288, height: 288).fill()
+    NSColor.black.setFill(); NSColor.black.setStroke()
+    image.draw(in: NSRect(x: 0, y: 0, width: 288, height: 288))
+    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: CommandLine.arguments[2]))
+    let before = LoginItem.isOn; LoginItem.set(true); let on = LoginItem.isOn; LoginItem.set(false)
+    print("login before", before, "on", on, "off", LoginItem.isOn)
+  }
+  exit(0)
+}
 runMeasurement(CommandLine.arguments)
 #endif
 
