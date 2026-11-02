@@ -14,8 +14,8 @@ if a.count > 1, a[1] == "selftest" {
   func at(_ h: Int, _ m: Int = 0) -> Date { cal.date(from: DateComponents(year: 2026, month: 6, day: 21, hour: h, minute: m))! }
   let rise = at(5, 30), set = at(20, 30)
   let expect: [(Int, Phase)] = [(3, .night), (5, .dawn), (8, .morning), (13, .noon), (17, .afternoon), (20, .sunset), (22, .night)]
-  for (h, p) in expect { check("\(h):00 -> \(p)", DayClock.phase(at: at(h), sunrise: rise, sunset: set, calendar: cal) == p) }
-  check("no sun data falls back", DayClock.phase(at: at(12), sunrise: nil, sunset: nil, calendar: cal) == .noon)
+  for (h, p) in expect { check("\(h):00 -> \(p)", DayClock.phase(at: at(h), sun: .normal(rise: rise, set: set), calendar: cal) == p) }
+  check("no sun data falls back", DayClock.phase(at: at(12), sun: nil, calendar: cal) == .noon)
   for (c, w) in [(0, Weather.clear), (3, .cloudy), (45, .fog), (61, .rain), (73, .snow), (95, .rain)] { check("wmo \(c) -> \(w)", WeatherService.weather(wmo: c) == w) }
   let root = URL(fileURLWithPath: a[2])
   let dev = MTLCreateSystemDefaultDevice()!
@@ -27,9 +27,69 @@ if a.count > 1, a[1] == "selftest" {
   var mixes: [Float] = []; let end = Date().addingTimeInterval(1.2)
   while Date() < end { if let f = sc.frame() { mixes.append(f.mix) }; usleep(10000) }
   check("crossfade rises then settles", (mixes.max() ?? 0) > 0.5 && mixes.last == 0 && Set(mixes).count > 5)
-  let place = try await WeatherService.search("Chicago")
-  check("geocode \(place?.name ?? "nil")", place != nil)
-  if let place { let c = try await WeatherService.conditions(place); check("forecast \(c.weather) rise \(c.sunrise.map(String.init(describing:)) ?? "nil")", c.sunrise != nil && c.sunset != nil) }
+  // Checked against Open-Meteo: Chicago sunrise on 2026-11-01 was 12:23 UTC.
+  let nov = Sun.times(on: Date(timeIntervalSince1970: 1793556000), latitude: 41.88, longitude: -87.63)
+  check("matches Open-Meteo sunrise", nov.map { abs($0.rise.timeIntervalSince1970 - 1793535780) < 180 } ?? false)
+  // Chicago, 2026-06-21: about 05:15 and 20:29 CDT.
+  let chi = Sun.times(on: at(12), latitude: 41.88, longitude: -87.63)
+  func hm(_ d: Date?) -> Int { guard let d else { return -1 }; let c = cal.dateComponents([.hour, .minute], from: d); return c.hour! * 60 + c.minute! }
+  check("Chicago sunrise \(hm(chi?.rise))", abs(hm(chi?.rise) - (5 * 60 + 15)) <= 3)
+  check("Chicago sunset \(hm(chi?.set))", abs(hm(chi?.set) - (20 * 60 + 29)) <= 3)
+  check("polar day has no sunset", Sun.times(on: at(12), latitude: 78.2, longitude: 15.6) == nil)
+  for (zone, lat, lon) in [("Asia/Tokyo", 35.68, 139.77), ("Pacific/Auckland", -36.87, 174.77), ("America/Los_Angeles", 34.05, -118.24)] {
+    var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: zone)!
+    let noon = c.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 12))!
+    let t = Sun.times(on: noon, latitude: lat, longitude: lon)
+    let ok = t.map { $0.rise < noon && noon < $0.set && noon.timeIntervalSince($0.rise) < 8 * 3600 } ?? false
+    check("\(zone) noon falls inside its own day", ok)
+  }
+  let z = ZoneLocation.parse("+415100-0873900"); check("zone.tab parse", z != nil && abs(z!.0 - 41.85) < 0.01 && abs(z!.1 + 87.65) < 0.01)
+  let z2 = ZoneLocation.parse("-2312-04312"); check("zone.tab short form", z2 != nil && abs(z2!.0 + 23.2) < 0.01 && abs(z2!.1 + 43.2) < 0.01)
+  check("local zone resolves", ZoneLocation.coordinates() != nil)
+  let t0 = Date(timeIntervalSince1970: 1_800_000_000); let pl = Place(name: "T", latitude: 1, longitude: 2)
+  let fc = Forecast(place: pl, fetchedAt: t0, hours: [.init(time: t0, code: 0), .init(time: t0 + 3600, code: 61)])
+  check("forecast hour lookup", fc.weather(at: t0 + 1800) == .clear && fc.weather(at: t0 + 3700) == .rain)
+  check("forecast expires", fc.weather(at: t0 + 7300) == nil)
+  check("3-hour freshness", fc.isFresh(at: t0 + 10000, for: pl) && !fc.isFresh(at: t0 + 11000, for: pl))
+  // International. A Mac on Chicago time, set to places elsewhere.
+  func noon(_ zone: String, _ lat: Double, _ lon: Double) -> Phase {
+    var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: zone)!
+    let d = c.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 12, minute: 30))!
+    return DayClock.phase(at: d, sun: Sun.day(on: d, latitude: lat, longitude: lon), calendar: cal)
+  }
+  for (z, la, lo) in [("Asia/Tokyo", 35.68, 139.77), ("Pacific/Auckland", -36.87, 174.77), ("Europe/Lisbon", 38.72, -9.14), ("Asia/Kolkata", 28.61, 77.21), ("America/Sao_Paulo", -23.55, -46.63)] {
+    let p = noon(z, la, lo); check("midday in \(z) is \(p) on a Chicago Mac", p == .noon)
+  }
+  var nz = Calendar(identifier: .gregorian); nz.timeZone = TimeZone(identifier: "Pacific/Auckland")!
+  for (m, exp) in [(1, 20.5), (7, 17.5)] { // southern summer and winter sunsets
+    let d = nz.date(from: DateComponents(year: 2026, month: m, day: 15, hour: 12))!
+    let s = Sun.times(on: d, latitude: -36.87, longitude: 174.77)?.set
+    let h = s.map { Double(nz.component(.hour, from: $0)) + Double(nz.component(.minute, from: $0)) / 60 } ?? -1
+    check("Auckland month \(m) sunset \(String(format: "%.2f", h))", abs(h - exp) < 0.75)
+  }
+  var sv = Calendar(identifier: .gregorian); sv.timeZone = TimeZone(identifier: "Arctic/Longyearbyen")!
+  let june = sv.date(from: DateComponents(year: 2026, month: 6, day: 21, hour: 12))!, dec = sv.date(from: DateComponents(year: 2026, month: 12, day: 21, hour: 12))!
+  check("Svalbard June stays light", DayClock.phase(at: june, sun: Sun.day(on: june, latitude: 78.2, longitude: 15.6)) != .night)
+  check("Svalbard December stays dark", DayClock.phase(at: dec, sun: Sun.day(on: dec, latitude: 78.2, longitude: 15.6)) == .night)
+  let old = ZoneLocation.estimate(TimeZone(identifier: "Asia/Calcutta")!); check("old zone name estimates longitude \(old.1)", abs(old.1 - 82.5) < 15)
+  let ls = LocationSearch()
+  let cases: [(String, Double, Double)] = [("Chicago", 41.88, -87.63), ("90210", 34.1, -118.4), ("東京", 35.68, 139.77), ("Москва", 55.75, 37.62), ("القاهرة", 30.04, 31.24),
+    ("München", 48.14, 11.58), ("Lisboa", 38.72, -9.14), ("São Paulo", -23.55, -46.63), ("Reykjavík", 64.15, -21.94), ("Sydney Australia", -33.87, 151.21),
+    ("SW1A 1AA", 51.5, -0.14), ("10115 Berlin", 52.53, 13.38), ("M5V", 43.64, -79.4), ("75001 Paris", 48.86, 2.34), ("100-0001", 35.68, 139.75), ("01310-100", -23.56, -46.65), ("2000 Australia", -33.87, 151.2)]
+  for (q, la, lo) in cases {
+    do {
+      let r = try await ls.search(q)
+      guard let f = r.first else { check("search \(q) -> none", false); continue }
+      let p = try await ls.resolve(f)
+      check("search \(q) -> \(p.name) (\(p.latitude), \(p.longitude))", abs(p.latitude - la) < 1 && abs(p.longitude - lo) < 1)
+    } catch { check("search \(q) error \(error.localizedDescription)", false) }
+  }
+  let one = try await ls.search("C"); check("one letter returns nothing", one.isEmpty)
+  let nope = try await ls.search("zzzzqqqqxxxx"); check("nonsense returns nothing", nope.isEmpty)
+  for (n, la, lo) in [("Tokyo", 35.68, 139.77), ("Reykjavik", 64.15, -21.94), ("Sydney", -33.87, 151.21), ("Nairobi", -1.29, 36.82)] {
+    let f = try await WeatherService.forecast(Place(name: n, latitude: la, longitude: lo))
+    check("forecast \(n): \(f.hours.count)h, \(f.weather(at: Date()).map(\.rawValue) ?? "nil")", f.hours.count >= 24 && f.weather(at: Date()) != nil)
+  }
   exit(bad == 0 ? 0 : 1)
 }
 guard a.count >= 7 else { print("usage"); exit(2) }

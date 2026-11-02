@@ -4,8 +4,9 @@
 
 A private virtual background camera for macOS. Janela puts you in a scene that follows
 your local time and weather, and shows up as a camera in Zoom, Meet, and anything else.
-All video stays on your Mac. The only network call is to Open-Meteo, and it only sends
-the location you typed.
+All video stays on your Mac. The location box searches with Apple Maps as you type, and
+weather comes from Open-Meteo using coordinates rounded to about a kilometre. Sun times
+are calculated on your Mac.
 
 ## How it works
 
@@ -18,6 +19,15 @@ temporal stabilizer → linear-light composite in Metal → CoreMediaIO camera s
 - Below full alpha, colour comes from RVM's foreground estimate, so the old room doesn't
   halo around you.
 - Nothing runs while no app reads the camera. The camera light stays off.
+
+## Setup
+
+The first launch asks for your city or postal code, in any language, and lets you pick a
+background. Reopen Janela, or use the menu bar sun icon, to change either one. If you skip
+the location, time of day comes from your time zone and the weather stays clear.
+
+Weather refreshes every 3 hours and after your Mac wakes. A 24-hour forecast is cached, so
+scenes keep changing between refreshes and while offline.
 
 ## Build
 

@@ -12,24 +12,36 @@ public struct SceneKey: Hashable { public var scene: String; public var weather:
 public struct SceneFrame { public let a: MTLTexture; public let b: MTLTexture; public let mix: Float }
 
 public enum DayClock {
-  /// Maps a moment onto a phase, using today's sunrise and sunset when known.
-  public static func phase(at date: Date, sunrise: Date?, sunset: Date?, calendar: Calendar = .current) -> Phase {
-    let c = calendar.dateComponents([.hour, .minute], from: date)
-    let h = Double(c.hour ?? 12) + Double(c.minute ?? 0) / 60
-    func hours(_ d: Date?, _ fallback: Double) -> Double {
-      guard let d else { return fallback }
-      let c = calendar.dateComponents([.hour, .minute], from: d); return Double(c.hour ?? 0) + Double(c.minute ?? 0) / 60
-    }
-    let rise = hours(sunrise, 6.5), set = hours(sunset, 18.5)
-    let day = max(set - rise, 1)
-    switch h {
-    case ..<(rise - 0.75): return .night
-    case ..<(rise + 0.75): return .dawn
-    case ..<(rise + day * 0.40): return .morning
-    case ..<(rise + day * 0.60): return .noon
-    case ..<(set - 0.75): return .afternoon
-    case ..<(set + 0.5): return .sunset
-    default: return .night
+  /// Maps a moment onto a phase. With sun data everything compares in absolute time,
+  /// so the Mac's time zone doesn't have to match the place. The clock is only a fallback.
+  public static func phase(at date: Date, sun: SunDay?, calendar: Calendar = .current) -> Phase {
+    switch sun {
+    case let .normal(rise, set):
+      let t = date.timeIntervalSince(rise), day = max(set.timeIntervalSince(rise), 3600), h = 3600.0
+      switch t {
+      case ..<(-0.75 * h): return .night
+      case ..<(0.75 * h): return .dawn
+      case ..<(day * 0.40): return .morning
+      case ..<(day * 0.60): return .noon
+      case ..<(day - 0.75 * h): return .afternoon
+      case ..<(day + 0.5 * h): return .sunset
+      default: return .night
+      }
+    case let .alwaysUp(noon):
+      let h = date.timeIntervalSince(noon) / 3600
+      return h < -10 ? .dawn : h < -2 ? .morning : h < 2 ? .noon : h < 10 ? .afternoon : .sunset
+    case .alwaysDown: return .night
+    case nil:
+      let c = calendar.dateComponents([.hour, .minute], from: date)
+      switch Double(c.hour ?? 12) + Double(c.minute ?? 0) / 60 {
+      case ..<5.75: return .night
+      case ..<7.25: return .dawn
+      case ..<11.3: return .morning
+      case ..<13.7: return .noon
+      case ..<17.75: return .afternoon
+      case ..<19: return .sunset
+      default: return .night
+      }
     }
   }
 }
@@ -49,6 +61,14 @@ public final class SceneController {
 
   public func availableScenes() -> [String] {
     ((try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
+  }
+
+  /// A small preview for the background picker.
+  public func thumbnail(scene: String, weather: Weather, phase: Phase, maxPixels: Int = 480) -> CGImage? {
+    let url = root.appendingPathComponent(SceneKey(scene: scene, weather: weather, phase: phase).file)
+    guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+    return CGImageSourceCreateThumbnailAtIndex(src, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceThumbnailMaxPixelSize: maxPixels, kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary)
   }
 
   /// Blocks until the image is decoded and shows it immediately.

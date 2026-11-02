@@ -1,10 +1,29 @@
 import Foundation
 
-public struct Place: Codable, Equatable { public var name: String; public var latitude, longitude: Double
-  public init(name: String, latitude: Double, longitude: Double) { self.name = name; self.latitude = latitude; self.longitude = longitude } }
-public struct Conditions { public var weather: Weather; public var sunrise, sunset: Date? }
+public struct Place: Codable, Equatable, Identifiable {
+  public var name: String; public var latitude, longitude: Double
+  public var id: String { "\(name)|\(latitude)|\(longitude)" }
+  public init(name: String, latitude: Double, longitude: Double) { self.name = name; self.latitude = latitude; self.longitude = longitude }
+}
 
-/// Open-Meteo is the only network service, and it only ever receives the place you typed.
+/// Hourly conditions, cached on disk so scenes keep changing between fetches and offline.
+public struct Forecast: Codable, Equatable {
+  public struct Hour: Codable, Equatable { public var time: Date; public var code: Int
+    public init(time: Date, code: Int) { self.time = time; self.code = code } }
+  public var place: Place; public var fetchedAt: Date; public var hours: [Hour]
+  public init(place: Place, fetchedAt: Date, hours: [Hour]) { self.place = place; self.fetchedAt = fetchedAt; self.hours = hours }
+
+  /// The hour covering `date`, or nil once the forecast has run out.
+  public func weather(at date: Date) -> Weather? {
+    guard let h = hours.last(where: { $0.time <= date }), date.timeIntervalSince(h.time) < 3600 else { return nil }
+    return WeatherService.weather(wmo: h.code)
+  }
+  public func isFresh(at date: Date, for p: Place, maxAge: TimeInterval = 3 * 3600) -> Bool {
+    place == p && date.timeIntervalSince(fetchedAt) < maxAge
+  }
+}
+
+/// Weather comes from Open-Meteo, which receives coordinates rounded to about a kilometre.
 public enum WeatherService {
   public static func weather(wmo c: Int) -> Weather {
     switch c {
@@ -15,27 +34,17 @@ public enum WeatherService {
     default: return .rain
     }
   }
-  private struct Forecast: Decodable {
-    struct Current: Decodable { let weather_code: Int }
-    struct Daily: Decodable { let sunrise: [String]; let sunset: [String] }
-    let current: Current; let daily: Daily; let utc_offset_seconds: Int
-  }
-  private struct Geo: Decodable { struct R: Decodable { let name: String; let latitude, longitude: Double; let admin1: String?; let country: String? }; let results: [R]? }
+  private struct Reply: Decodable { struct Hourly: Decodable { let time: [Double]; let weather_code: [Int?] }; let hourly: Hourly }
 
-  public static func conditions(_ p: Place) async throws -> Conditions {
+  /// Keeps the past hour plus the next 24.
+  public static func forecast(_ p: Place, now: Date = Date()) async throws -> Forecast {
     var u = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
     u.queryItems = [.init(name: "latitude", value: String(format: "%.2f", p.latitude)), .init(name: "longitude", value: String(format: "%.2f", p.longitude)),
-      .init(name: "current", value: "weather_code"), .init(name: "daily", value: "sunrise,sunset"), .init(name: "timezone", value: "auto"), .init(name: "forecast_days", value: "1")]
+      .init(name: "hourly", value: "weather_code"), .init(name: "forecast_days", value: "3"), .init(name: "timeformat", value: "unixtime")]
     let (d, _) = try await URLSession.shared.data(from: u.url!)
-    let f = try JSONDecoder().decode(Forecast.self, from: d)
-    let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = "yyyy-MM-dd'T'HH:mm"; df.timeZone = TimeZone(secondsFromGMT: f.utc_offset_seconds)
-    return Conditions(weather: weather(wmo: f.current.weather_code), sunrise: f.daily.sunrise.first.flatMap(df.date), sunset: f.daily.sunset.first.flatMap(df.date))
-  }
-  public static func search(_ q: String) async throws -> Place? {
-    var u = URLComponents(string: "https://geocoding-api.open-meteo.com/v1/search")!
-    u.queryItems = [.init(name: "name", value: q), .init(name: "count", value: "1")]
-    let (d, _) = try await URLSession.shared.data(from: u.url!)
-    guard let r = try JSONDecoder().decode(Geo.self, from: d).results?.first else { return nil }
-    return Place(name: [r.name, r.admin1].compactMap { $0 }.joined(separator: ", "), latitude: r.latitude, longitude: r.longitude)
+    let h = try JSONDecoder().decode(Reply.self, from: d).hourly
+    let hours = zip(h.time, h.weather_code).compactMap { t, c in c.map { Forecast.Hour(time: Date(timeIntervalSince1970: t), code: $0) } }
+      .filter { $0.time > now.addingTimeInterval(-3600) && $0.time <= now.addingTimeInterval(24 * 3600) }
+    return Forecast(place: p, fetchedAt: now, hours: hours)
   }
 }

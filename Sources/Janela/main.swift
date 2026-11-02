@@ -3,6 +3,7 @@ import CoreMedia
 import JanelaCamera
 import JanelaCore
 import QuartzCore
+import SwiftUI
 
 struct Config: Codable {
   var scene = "atelier"
@@ -10,6 +11,7 @@ struct Config: Codable {
   var place: Place?
   var manualWeather: String?   // nil = follow live weather
   var manualPhase: String?     // nil = follow the sun
+  var setupDone: Bool?
   var outputDevices: [String]? // camera extensions to publish to, in order
   static let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Janela/config.json")
   static func load() -> Config { (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Config.self, from: $0) } ?? Config() }
@@ -19,7 +21,7 @@ struct Config: Codable {
   }
 }
 
-final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@MainActor final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
   var config = Config.load()
   var pipeline: Pipeline!
   var source: FrameSource!
@@ -34,7 +36,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
   var watchTimer: Timer?
   lazy var alwaysOn = UserDefaults.standard.bool(forKey: "alwaysOn")
   lazy var probeEvery: TimeInterval = { let v = UserDefaults.standard.double(forKey: "probeEvery"); return v > 0 ? v : 120 }()
-  var conditions: Conditions?
+  var forecast: Forecast?
+  var lastAttempt = Date.distantPast
+  var setup: SetupWindow?
+  static let forecastURL = Config.url.deletingLastPathComponent().appendingPathComponent("forecast.json")
   var message: String?
   let filePath = UserDefaults.standard.string(forKey: "file")      // -file <path> replays a clip
   let statsPath = UserDefaults.standard.string(forKey: "stats")    // -stats <path> appends one line a second
@@ -54,12 +59,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         DispatchQueue.main.async { w.contentView?.layer?.contents = s }
       }
     }
+    forecast = (try? Data(contentsOf: Self.forecastURL)).flatMap { try? JSONDecoder.iso.decode(Forecast.self, from: $0) }
     updateScene(immediate: true)
-    Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.updateScene(immediate: false) }
-    Timer.scheduledTimer(withTimeInterval: 1800, repeats: true) { [weak self] _ in self?.refreshWeather() }
-    refreshWeather()
+    Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+    NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+      MainActor.assumeIsolated { self?.tick() } }
+    tick()
     if let statsPath { startStats(statsPath) }
     if config.enabled { setRunning(true) }
+    if config.setupDone != true || UserDefaults.standard.string(forKey: "setupDemo") != nil { showSetup(firstRun: true) }
+  }
+
+  func applicationShouldHandleReopen(_ a: NSApplication, hasVisibleWindows v: Bool) -> Bool {
+    showSetup(firstRun: false); return false
   }
 
   func startStats(_ path: String) {
@@ -97,6 +109,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
       if !running { message = "Virtual camera not installed. See README." }
       return
     }
+    // A preferred camera can appear while running. Move to it rather than keep feeding the old one.
+    if running, !probing, let current = sink.status.deviceName, current != name { sink.reconnect() }
     if case .some(true) = VirtualCameraSink.runningSomewhere(named: name), !running {
       message = nil; activate()
     } else if running, !alwaysOn, !probing, Date().timeIntervalSince(lastProbe) >= probeEvery {
@@ -126,17 +140,65 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
   }
 
   func key() -> SceneKey {
-    let w = config.manualWeather.flatMap(Weather.init) ?? conditions?.weather ?? .clear
-    let p = config.manualPhase.flatMap(Phase.init) ?? DayClock.phase(at: Date(), sunrise: conditions?.sunrise, sunset: conditions?.sunset)
-    return SceneKey(scene: config.scene, weather: w, phase: p)
+    let now = Date()
+    let names = pipeline.scenes.availableScenes()
+    let scene = names.contains(config.scene) ? config.scene : names.first ?? config.scene
+    let w = config.manualWeather.flatMap(Weather.init) ?? forecast?.weather(at: now) ?? .clear
+    let spot = config.place.map { ($0.latitude, $0.longitude) } ?? ZoneLocation.estimate()
+    let sun = Sun.day(on: now, latitude: spot.0, longitude: spot.1)
+    let p = config.manualPhase.flatMap(Phase.init) ?? DayClock.phase(at: now, sun: sun)
+    return SceneKey(scene: scene, weather: w, phase: p)
   }
   func updateScene(immediate: Bool) {
     if immediate { try? pipeline.scenes.show(key()) } else { pipeline.scenes.transition(to: key()) }
   }
-  func refreshWeather() {
+  func tick() { updateScene(immediate: false); refreshWeather() }
+
+  /// Every 3 hours, retrying after 15 minutes on failure. The cached hours drive scenes meanwhile.
+  func refreshWeather(force: Bool = false) {
     guard let place = config.place else { return }
+    let now = Date()
+    if !force, forecast?.isFresh(at: now, for: place) == true || now.timeIntervalSince(lastAttempt) < 900 { return }
+    lastAttempt = now
     Task { @MainActor in
-      if let c = try? await WeatherService.conditions(place) { conditions = c; updateScene(immediate: false) }
+      guard let f = try? await WeatherService.forecast(place), config.place == place else { return }
+      forecast = f; updateScene(immediate: false)
+      try? JSONEncoder.iso.encode(f).write(to: Self.forecastURL)
+    }
+  }
+
+  func showSetup(firstRun: Bool) {
+    if let setup, setup.window.isVisible { setup.window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); return }
+    let k = key()
+    let scenes = pipeline.scenes.availableScenes().map { (name: $0, image: pipeline.scenes.thumbnail(scene: $0, weather: k.weather, phase: k.phase)) }
+    let m = SetupModel(place: config.place, scene: k.scene, scenes: scenes, firstRun: firstRun, cameraName: outputDevice())
+    let w = SetupWindow(model: m); setup = w
+    m.onScene = { [weak self] s in self?.setScene(s) }
+    m.onDone = { [weak self, weak w] p in
+      guard let self else { return }
+      let changed = p != config.place
+      config.place = p; config.setupDone = true; config.save()
+      if changed { forecast = nil; try? FileManager.default.removeItem(at: Self.forecastURL); updateScene(immediate: true); refreshWeather(force: true) }
+      w?.window.close()
+    }
+    w.show()
+    if let d = UserDefaults.standard.string(forKey: "setupDemo") { runDemo(d, m, w) }
+  }
+
+  func setScene(_ s: String) { config.scene = s; config.save(); updateScene(immediate: true) }
+
+  /// -setupDemo <query> -setupShots <prefix>: drives the real window for tests, without saving.
+  func runDemo(_ q: String, _ m: SetupModel, _ w: SetupWindow) {
+    let shots = UserDefaults.standard.string(forKey: "setupShots") ?? "/tmp/janela"
+    Task { @MainActor in
+      try? await Task.sleep(for: .seconds(1)); w.snapshot(to: shots + "-1-empty.png")
+      m.query = q
+      try? await Task.sleep(for: .seconds(2)); w.snapshot(to: shots + "-2-suggest.png")
+      print("suggestions:", m.suggestions.map(\.label))
+      if let f = m.suggestions.first { await m.choose(f) }
+      if let o = m.scenes.first(where: { $0.name != m.scene }) { m.scene = o.name }
+      try? await Task.sleep(for: .seconds(1)); w.snapshot(to: shots + "-3-chosen.png")
+      print("place:", m.place?.name ?? "nil", "scene:", m.scene); exit(0)
     }
   }
 
@@ -152,14 +214,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     m.addItem(sub("Scene", pipeline?.scenes.availableScenes().map { item($0.capitalized, $0 == config.scene, #selector(pickScene), $0) } ?? []))
     m.addItem(sub("Weather", [item("Live", config.manualWeather == nil, #selector(pickWeather), nil)] + Weather.allCases.map { item($0.rawValue.capitalized, config.manualWeather == $0.rawValue, #selector(pickWeather), $0.rawValue) }))
     m.addItem(sub("Time of Day", [item("Follow the Sun", config.manualPhase == nil, #selector(pickPhase), nil)] + Phase.allCases.map { item($0.rawValue.capitalized, config.manualPhase == $0.rawValue, #selector(pickPhase), $0.rawValue) }))
-    m.addItem(item("Location: \(config.place?.name ?? "Not Set")…", false, #selector(setLocation)))
+    m.addItem(item("Location and Background…", false, #selector(openSettings)))
     m.addItem(.separator())
     m.addItem(item("Quit Janela", false, #selector(quit)))
   }
 
   @objc func toggle() { setRunning(!armed) }
   @objc func quit() { NSApp.terminate(nil) }
-  @objc func pickScene(_ i: NSMenuItem) { config.scene = i.representedObject as! String; config.save(); updateScene(immediate: true) }
+  @objc func pickScene(_ i: NSMenuItem) { setScene(i.representedObject as! String) }
+  @objc func openSettings() { showSetup(firstRun: false) }
   @objc func pickWeather(_ i: NSMenuItem) { config.manualWeather = i.representedObject as? String; config.save(); updateScene(immediate: true) }
   @objc func pickPhase(_ i: NSMenuItem) { config.manualPhase = i.representedObject as? String; config.save(); updateScene(immediate: true) }
   @objc func togglePreview() {
@@ -169,17 +232,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSMenuDelegate {
     w.contentView?.wantsLayer = true; w.contentView?.layer?.contentsGravity = .resizeAspect
     w.center(); w.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true); previewWindow = w
   }
-  @objc func setLocation() {
-    let a = NSAlert(); a.messageText = "Where are you?"; a.informativeText = "Sent only to Open-Meteo, for local weather and sunrise."
-    let f = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24)); f.stringValue = config.place?.name ?? ""; a.accessoryView = f
-    a.addButton(withTitle: "Save"); a.addButton(withTitle: "Cancel"); NSApp.activate(ignoringOtherApps: true)
-    guard a.runModal() == .alertFirstButtonReturn else { return }
-    let q = f.stringValue
-    Task { @MainActor in
-      if let p = try? await WeatherService.search(q) { config.place = p; config.save(); refreshWeather() } else { message = "Could not find “\(q)”" }
-    }
-  }
 }
+
+extension JSONEncoder { static var iso: JSONEncoder { let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601; return e } }
+extension JSONDecoder { static var iso: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d } }
 
 // Two copies would both capture the camera and write into one sink, which corrupts the picture.
 // An exclusive lock covers every launch path, and the OS releases it even after a crash.
@@ -188,7 +244,7 @@ let instanceLock = open(Config.url.deletingLastPathComponent().appendingPathComp
 if instanceLock < 0 || flock(instanceLock, LOCK_EX | LOCK_NB) != 0 { exit(0) }
 
 let app = NSApplication.shared
-let controller = AppController()
+let controller = MainActor.assumeIsolated { AppController() }
 app.delegate = controller
 app.setActivationPolicy(.accessory)
 app.run()
